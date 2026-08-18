@@ -1,0 +1,15 @@
+# сборка
+build/
+
+# личное — никогда не коммитить
+*.wav
+*.log
+*.p12
+*.pem
+
+# системный мусор
+.DS_Store
+__pycache__/
+.venv/
+icon/Giga.iconset/
+icon/drafts/
