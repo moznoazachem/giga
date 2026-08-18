@@ -7,7 +7,11 @@ APP="build/Гига.app"
 rm -rf build
 mkdir -p "$APP/Contents/MacOS"
 
-swiftc -O -o "$APP/Contents/MacOS/Giga" main.swift
+# универсальный бинарник: Apple Silicon + Intel в одном файле
+swiftc -O -target arm64-apple-macos13 -o build/Giga-arm64 main.swift
+swiftc -O -target x86_64-apple-macos13 -o build/Giga-x86_64 main.swift
+lipo -create build/Giga-arm64 build/Giga-x86_64 -output "$APP/Contents/MacOS/Giga"
+rm build/Giga-arm64 build/Giga-x86_64
 cp Info.plist "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources"
 cp icon/Giga.icns "$APP/Contents/Resources/Giga.icns"
