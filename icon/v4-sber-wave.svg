@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Вариант 4: «Сбер-волна» — чёрный корпус (как знак GigaChat), волна в фирменном градиенте Сбера -->
+  <defs>
+    <linearGradient id="sber" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#E4F23C"/>
+      <stop offset="0.35" stop-color="#35C650"/>
+      <stop offset="0.68" stop-color="#00B4A0"/>
+      <stop offset="1" stop-color="#009FDF"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#0d0d0f"/>
+  <g fill="url(#sber)">
+    <rect x="291" y="452" width="66" height="120" rx="33"/>
+    <rect x="399" y="382" width="66" height="260" rx="33"/>
+    <rect x="507" y="312" width="66" height="400" rx="33"/>
+    <rect x="615" y="382" width="66" height="260" rx="33"/>
+    <rect x="723" y="452" width="66" height="120" rx="33"/>
+  </g>
+</svg>
