@@ -20,7 +20,6 @@ func findModelDir() -> String? {
     var places: [String] = []
     if let res = Bundle.main.resourcePath { places.append(res + "/model") }
     places.append("\(NSHomeDirectory())/.giga/model")
-    places.append("\(NSHomeDirectory())/projects/gigaam-cli/onnx_int8")
     for dir in places
     where FileManager.default.fileExists(atPath: "\(dir)/\(Recognizer.modelName).yaml") {
         return dir

@@ -58,6 +58,11 @@ if [ "$WITH_MODEL" = "1" ]; then
     echo "── кладу модель внутрь ($SRC)"
     mkdir -p "$APP/Contents/Resources/model"
     cp "$SRC"/v3_e2e_rnnt* "$APP/Contents/Resources/model/"
+    # В yaml записан путь к токенизатору с той машины, где делали экспорт.
+    # Приложению он не нужен (ищет токенизатор рядом с моделью), а чужой
+    # домашний каталог в раздаваемом файле — лишнее. Затираем.
+    sed -i '' 's|model_path: .*|model_path: v3_e2e_rnnt_tokenizer.model|' \
+        "$APP/Contents/Resources/model/v3_e2e_rnnt.yaml"
 fi
 
 # Подпись стабильным сертификатом: разрешения (микрофон, мониторинг ввода)

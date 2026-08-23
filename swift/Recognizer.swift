@@ -52,8 +52,6 @@ final class Recognizer {
     static let maxChunk = 24.0          // предел одного прохода модели — 25 секунд
     static let maxSymbolsPerFrame = 3   // столько букв максимум с одного кадра
 
-    private let env: OpaquePointer
-    private let options: OpaquePointer
     private let encoder: OrtSession
     private let decoder: OrtSession
     private let joint: OrtSession
@@ -65,13 +63,11 @@ final class Recognizer {
     init(modelDir: String, threads: Int = 0) throws {
         self.modelDir = modelDir
 
-        var e: OpaquePointer?
-        try ortCheck(ortApi.pointee.CreateEnv(ORT_LOGGING_LEVEL_ERROR, "giga", &e))
-        env = e!
-
+        // Настройки нужны только пока создаются сессии — дальше отпускаем.
         var o: OpaquePointer?
         try ortCheck(ortApi.pointee.CreateSessionOptions(&o))
-        options = o!
+        guard let options = o else { throw OrtError.failed("не создались настройки сессии") }
+        defer { ortApi.pointee.ReleaseSessionOptions(options) }
         let n = threads > 0 ? threads : min(8, ProcessInfo.processInfo.activeProcessorCount)
         try ortCheck(ortApi.pointee.SetIntraOpNumThreads(options, Int32(n)))
         try ortCheck(ortApi.pointee.SetSessionGraphOptimizationLevel(options, ORT_ENABLE_ALL))
@@ -79,18 +75,13 @@ final class Recognizer {
         cfg = ModelConfig.load("\(modelDir)/\(Self.modelName).yaml")
         features = Features(cfg.features)
 
-        encoder = try OrtSession(env: env, path: "\(modelDir)/\(Self.modelName)_encoder.onnx", options: options)
-        decoder = try OrtSession(env: env, path: "\(modelDir)/\(Self.modelName)_decoder.onnx", options: options)
-        joint = try OrtSession(env: env, path: "\(modelDir)/\(Self.modelName)_joint.onnx", options: options)
+        encoder = try OrtSession(path: "\(modelDir)/\(Self.modelName)_encoder.onnx", options: options)
+        decoder = try OrtSession(path: "\(modelDir)/\(Self.modelName)_decoder.onnx", options: options)
+        joint = try OrtSession(path: "\(modelDir)/\(Self.modelName)_joint.onnx", options: options)
 
         // Токенизатор ищем рядом с моделью: в yaml прописан путь с той машины,
         // где делали экспорт, и на любой другой он не существует.
         tokenizer = try Tokenizer(path: "\(modelDir)/\(Self.modelName)_tokenizer.model")
-    }
-
-    deinit {
-        ortApi.pointee.ReleaseSessionOptions(options)
-        ortApi.pointee.ReleaseEnv(env)
     }
 
     /// Распознаёт готовый wav-файл: 16 кГц, моно, 16 бит — ровно такой пишет
@@ -103,6 +94,12 @@ final class Recognizer {
     /// Распознаёт запись любой длины: если не влезает в один проход модели,
     /// режется по паузам между фразами, а не посреди слова, и склеивается.
     func transcribe(samples: [Float], rate: Int) throws -> String {
+        // Модель обучена на 16 кГц. Другой частоте здесь взяться неоткуда —
+        // приложение пишет именно так, — но если придёт, лучше сказать
+        // об этом прямо, чем выдать бессмыслицу.
+        guard rate == cfg.features.sampleRate else {
+            throw OrtError.failed("нужен звук \(cfg.features.sampleRate) Гц, а пришёл \(rate)")
+        }
         let total = Double(samples.count) / Double(rate)
         if total <= Self.maxChunk + 1 {
             return try transcribe(wave: samples)

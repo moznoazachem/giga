@@ -6,6 +6,15 @@ import Foundation
 
 let ortApi = OrtGetApiBase().pointee.GetApi(UInt32(ORT_API_VERSION))!
 
+/// Окружение onnxruntime — одно на всю программу. Освобождать его нельзя,
+/// пока живы сессии, поэтому оно живёт до конца и не освобождается вовсе.
+let ortEnv: OpaquePointer = {
+    var env: OpaquePointer?
+    let st = ortApi.pointee.CreateEnv(ORT_LOGGING_LEVEL_ERROR, "giga", &env)
+    precondition(st == nil && env != nil, "onnxruntime: не создалось окружение")
+    return env!
+}()
+
 enum OrtError: Error, CustomStringConvertible {
     case failed(String)
     var description: String {
@@ -44,9 +53,9 @@ final class OrtSession {
     private var inputC: [UnsafePointer<CChar>?] = []
     private var outputC: [UnsafePointer<CChar>?] = []
 
-    init(env: OpaquePointer, path: String, options: OpaquePointer) throws {
+    init(path: String, options: OpaquePointer) throws {
         var s: OpaquePointer?
-        try ortCheck(ortApi.pointee.CreateSession(env, path, options, &s))
+        try ortCheck(ortApi.pointee.CreateSession(ortEnv, path, options, &s))
         guard let s else { throw OrtError.failed("не создалась сессия: \(path)") }
         session = s
 
@@ -61,16 +70,19 @@ final class OrtSession {
         try ortCheck(ortApi.pointee.SessionGetInputCount(session, &nIn))
         try ortCheck(ortApi.pointee.SessionGetOutputCount(session, &nOut))
 
+        // Имена выдаёт onnxruntime своей памятью — её надо вернуть ему же.
         var ins: [String] = [], outs: [String] = []
         for i in 0..<nIn {
             var n: UnsafeMutablePointer<CChar>?
             try ortCheck(ortApi.pointee.SessionGetInputName(session, i, alloc, &n))
             ins.append(String(cString: n!))
+            _ = ortApi.pointee.AllocatorFree(alloc, n)
         }
         for i in 0..<nOut {
             var n: UnsafeMutablePointer<CChar>?
             try ortCheck(ortApi.pointee.SessionGetOutputName(session, i, alloc, &n))
             outs.append(String(cString: n!))
+            _ = ortApi.pointee.AllocatorFree(alloc, n)
         }
         inputNames = ins
         outputNames = outs
