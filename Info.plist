@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Гига</string>
+    <string>Giga Pisar</string>
     <key>CFBundleDisplayName</key>
-    <string>Гига</string>
+    <string>Giga Pisar</string>
     <key>CFBundleIdentifier</key>
     <string>ru.panda.giga</string>
     <key>CFBundleExecutable</key>
@@ -23,7 +23,7 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Гига записывает голос, чтобы превратить его в текст (локально, через GigaAM).</string>
+    <string>Giga Pisar записывает голос, чтобы превратить его в текст (локально, через GigaAM).</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>

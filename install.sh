@@ -1,42 +1,24 @@
 #!/bin/bash
-# Установка серверной части Гиги (распознавание речи GigaAM) в ~/.giga
+# Кладёт файлы модели в ~/.giga/model. Больше ничего не нужно:
+# распознавание живёт внутри самого приложения — ни питона, ни ffmpeg.
 set -e
-cd "$(dirname "$0")"
 
-echo "== Гига: установка серверной части =="
+MODEL_URL="https://github.com/moznoazachem/giga-pisar/releases/latest/download/gigaam-v3-onnx-int8.tar.gz"
+DEST=~/.giga/model
 
-# ffmpeg нужен для конвертации аудио
-if ! command -v ffmpeg >/dev/null; then
-    echo "Нужен ffmpeg. Поставь и запусти скрипт снова:"
-    echo "  brew install ffmpeg"
-    exit 1
+echo "== Giga Pisar: модель распознавания =="
+
+if [ -f "$DEST/v3_e2e_rnnt.yaml" ]; then
+    echo "Модель уже на месте: $DEST"
+else
+    echo "Качаю модель (204 МБ архив, 309 МБ на диске)..."
+    mkdir -p "$DEST"
+    curl -fL --progress-bar "$MODEL_URL" | tar xz -C "$DEST" --strip-components=1
 fi
-
-# Python 3.10–3.12 (более новые пока не дружат с PyTorch)
-PY=""
-for v in python3.12 python3.11 python3.10; do
-    command -v $v >/dev/null && PY=$(command -v $v) && break
-done
-if [ -z "$PY" ]; then
-    echo "Нужен Python 3.10–3.12. Поставь и запусти скрипт снова:"
-    echo "  brew install python@3.12"
-    exit 1
-fi
-echo "Python: $PY"
-
-mkdir -p ~/.giga
-cp server/server.py server/transcribe.py ~/.giga/
-
-if [ ! -d ~/.giga/.venv ]; then
-    "$PY" -m venv ~/.giga/.venv
-fi
-echo "Ставлю зависимости (PyTorch тяжёлый, может занять несколько минут)..."
-~/.giga/.venv/bin/pip install -q --upgrade pip
-~/.giga/.venv/bin/pip install -q "git+https://github.com/salute-developers/GigaAM" fastapi uvicorn python-multipart
 
 echo ""
 echo "✓ Готово. Теперь:"
-echo "  1. Скопируй Гига.app в Программы и открой (правый клик → Open при первом запуске)"
-echo "  2. Разреши три доступа, которые она попросит (клавиатура, микрофон, вставка текста)"
-echo "  3. При первой диктовке модель (~450 МБ) скачается автоматически — подожди"
-echo "  4. Зажми правый ⌘ и говори"
+echo "  1. Перетащи «Giga Pisar.app» в Программы и открой его"
+echo "     (если система ругается: System Settings → Privacy & Security → Open Anyway)"
+echo "  2. Разреши три доступа, которые он попросит (клавиатура, микрофон, вставка текста)"
+echo "  3. Зажми правый ⌘ и говори"

@@ -1,29 +1,29 @@
-// Гига — диктовка через GigaAM для macOS.
+// Гига Писарь — диктовка через GigaAM для macOS.
 // Зажми правый ⌘ — говори — отпусти — текст вставится в активное окно.
-// Распознавание: локальный сервер ~/projects/gigaam-cli/server.py (порт 8737).
+// Распознавание идёт внутри самого приложения (Recognizer.swift): ни питона,
+// ни ffmpeg, ни какого-либо сервера рядом не нужно.
 
 import AVFoundation
 import AppKit
 import ServiceManagement
 
-let SERVER_URL = URL(string: "http://127.0.0.1:8737/v1/audio/transcriptions")!
-let HEALTH_URL = URL(string: "http://127.0.0.1:8737/health")!
+// Язык интерфейса берём у системы: русская система — русские надписи,
+// любая другая — английские. Имя приложения (Giga Pisar) не переводится.
+let uiIsRussian: Bool = (Locale.preferredLanguages.first ?? "en").hasPrefix("ru")
 
-// Серверная часть: штатно ставится скриптом install.sh в ~/.giga/,
-// запасной вариант — дев-окружение в ~/projects/gigaam-cli/.
-let SERVER_DIRS = [
-    "\(NSHomeDirectory())/.giga",
-    "\(NSHomeDirectory())/projects/gigaam-cli",
-]
+/// Выбирает надпись по языку системы: L(<по-русски>, <по-английски>).
+func L(_ ru: String, _ en: String) -> String { uiIsRussian ? ru : en }
 
-func findServer() -> (python: String, script: String)? {
-    for dir in SERVER_DIRS {
-        let py = "\(dir)/.venv/bin/python"
-        let script = "\(dir)/server.py"
-        if FileManager.default.fileExists(atPath: py),
-           FileManager.default.fileExists(atPath: script) {
-            return (py, script)
-        }
+// Где искать файлы модели. Сначала внутри самого приложения — так его можно
+// отдать человеку одним куском; потом обычные места на диске.
+func findModelDir() -> String? {
+    var places: [String] = []
+    if let res = Bundle.main.resourcePath { places.append(res + "/model") }
+    places.append("\(NSHomeDirectory())/.giga/model")
+    places.append("\(NSHomeDirectory())/projects/gigaam-cli/onnx_int8")
+    for dir in places
+    where FileManager.default.fileExists(atPath: "\(dir)/\(Recognizer.modelName).yaml") {
+        return dir
     }
     return nil
 }
@@ -39,9 +39,9 @@ struct Hotkey {
 }
 
 let HOTKEYS: [Hotkey] = [
-    Hotkey(id: "rcmd", title: "Правый ⌘", keycode: 54, flag: .maskCommand),
-    Hotkey(id: "ropt", title: "Правый ⌥", keycode: 61, flag: .maskAlternate),
-    Hotkey(id: "rctrl", title: "Правый ⌃", keycode: 62, flag: .maskControl),
+    Hotkey(id: "rcmd", title: L("Правый ⌘", "Right ⌘"), keycode: 54, flag: .maskCommand),
+    Hotkey(id: "ropt", title: L("Правый ⌥", "Right ⌥"), keycode: 61, flag: .maskAlternate),
+    Hotkey(id: "rctrl", title: L("Правый ⌃", "Right ⌃"), keycode: 62, flag: .maskControl),
     Hotkey(id: "fn", title: "Fn (🌐)", keycode: 63, flag: .maskSecondaryFn),
 ]
 
@@ -90,11 +90,15 @@ final class App: NSObject, NSApplicationDelegate {
     var animTimer: Timer?
     var eventTap: CFMachPort?
 
+    /// Модель. Грузится один раз в фоне, чтобы первая же диктовка не ждала.
+    var recognizer: Recognizer?
+    let recognizerQueue = DispatchQueue(label: "ru.panda.giga.recognizer")
+
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setState(.idle)
         buildMenu()
-        ensureServer()
+        loadModel()
         requestInputMonitoring()
     }
 
@@ -105,7 +109,7 @@ final class App: NSObject, NSApplicationDelegate {
             startEventTap()
             return
         }
-        CGRequestListenEventAccess() // системный промпт + Гига появляется в списке
+        CGRequestListenEventAccess() // системный промпт + Гига Писарь появляется в списке
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
             if CGPreflightListenEventAccess() {
@@ -144,18 +148,19 @@ final class App: NSObject, NSApplicationDelegate {
     func buildMenu() {
         let menu = NSMenu()
 
-        let header = NSMenuItem(title: "Гига — диктовка (зажми \(currentHotkey().title))", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: L("Гига Писарь — диктовка (зажми \(currentHotkey().title))",
+                                     "Giga Pisar — dictation (hold \(currentHotkey().title))"), action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(NSMenuItem.separator())
 
-        let toggle = NSMenuItem(title: "Начать/остановить запись", action: #selector(menuToggle), keyEquivalent: "")
+        let toggle = NSMenuItem(title: L("Начать/остановить запись", "Start / stop recording"), action: #selector(menuToggle), keyEquivalent: "")
         toggle.target = self
         menu.addItem(toggle)
         menu.addItem(NSMenuItem.separator())
 
         // выбор клавиши диктовки
-        let keyItem = NSMenuItem(title: "Клавиша диктовки", action: nil, keyEquivalent: "")
+        let keyItem = NSMenuItem(title: L("Клавиша диктовки", "Dictation key"), action: nil, keyEquivalent: "")
         let keyMenu = NSMenu()
         for hk in HOTKEYS {
             let item = NSMenuItem(title: hk.title, action: #selector(pickHotkey(_:)), keyEquivalent: "")
@@ -168,13 +173,13 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(keyItem)
 
         // автозапуск при входе
-        let login = NSMenuItem(title: "Запускать при входе", action: #selector(toggleLogin), keyEquivalent: "")
+        let login = NSMenuItem(title: L("Запускать при входе", "Open at login"), action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         menu.addItem(login)
 
         menu.addItem(NSMenuItem.separator())
-        let quit = NSMenuItem(title: "Выйти", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L("Выйти", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
         statusItem.menu = menu
     }
@@ -199,8 +204,9 @@ final class App: NSObject, NSApplicationDelegate {
             }
         } catch {
             let a = NSAlert()
-            a.messageText = "Не получилось изменить автозапуск"
-            a.informativeText = "Добавь вручную: System Settings → General → Login Items. (\(error.localizedDescription))"
+            a.messageText = L("Не получилось изменить автозапуск", "Couldn't change the login setting")
+            a.informativeText = L("Добавь вручную: System Settings → General → Login Items. (\(error.localizedDescription))",
+                                  "Add it manually: System Settings → General → Login Items. (\(error.localizedDescription))")
             a.runModal()
         }
         buildMenu()
@@ -208,17 +214,28 @@ final class App: NSObject, NSApplicationDelegate {
 
     // MARK: сервер
 
-    func ensureServer() {
-        var req = URLRequest(url: HEALTH_URL)
-        req.timeoutInterval = 2
-        URLSession.shared.dataTask(with: req) { _, resp, _ in
-            if (resp as? HTTPURLResponse)?.statusCode != 200, let srv = findServer() {
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: srv.python)
-                p.arguments = [srv.script]
-                try? p.run()
+    func loadModel() {
+        guard let dir = findModelDir() else {
+            DispatchQueue.main.async { [weak self] in self?.complainNoModel() }
+            return
+        }
+        recognizerQueue.async { [weak self] in
+            do {
+                let r = try Recognizer(modelDir: dir)
+                DispatchQueue.main.async { self?.recognizer = r }
+            } catch {
+                NSLog("Гига Писарь: модель не загрузилась — \(error)")
+                DispatchQueue.main.async { self?.complainNoModel() }
             }
-        }.resume()
+        }
+    }
+
+    func complainNoModel() {
+        let a = NSAlert()
+        a.messageText = L("Не нашёл файлы модели", "Speech model not found")
+        a.informativeText = L("Ожидались в ~/.giga/model. Поставь их скриптом install.sh из репозитория.",
+                              "Expected in ~/.giga/model. Install them with install.sh from the repository.")
+        a.runModal()
     }
 
     // MARK: перехват правого ⌘ (CGEventTap с самовосстановлением)
@@ -242,8 +259,9 @@ final class App: NSObject, NSApplicationDelegate {
             callback: callback, userInfo: refcon
         ) else {
             let a = NSAlert()
-            a.messageText = "Гиге нужен «Мониторинг ввода» (Input Monitoring)"
-            a.informativeText = "System Settings → Privacy & Security → Input Monitoring → включи «Гига»."
+            a.messageText = L("Гига Писарю нужен «Мониторинг ввода» (Input Monitoring)", "Giga Pisar needs Input Monitoring")
+            a.informativeText = L("System Settings → Privacy & Security → Input Monitoring → включи «Giga Pisar».",
+                                  "System Settings → Privacy & Security → Input Monitoring → turn on “Giga Pisar”.")
             a.runModal()
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
             return
@@ -280,8 +298,9 @@ final class App: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 guard granted else {
                     let a = NSAlert()
-                    a.messageText = "Гиге нужен доступ к микрофону"
-                    a.informativeText = "Системные настройки → Конфиденциальность и безопасность → Микрофон → включи «Гига»."
+                    a.messageText = L("Гига Писарю нужен доступ к микрофону", "Giga Pisar needs microphone access")
+                    a.informativeText = L("Системные настройки → Конфиденциальность и безопасность → Микрофон → включи «Giga Pisar».",
+                                  "System Settings → Privacy & Security → Microphone → turn on “Giga Pisar”.")
                     a.runModal()
                     return
                 }
@@ -329,36 +348,31 @@ final class App: NSObject, NSApplicationDelegate {
 
     func transcribe() {
         setState(.busy)
-        guard let wav = try? Data(contentsOf: URL(fileURLWithPath: WAV_PATH)) else {
+        guard let r = recognizer else {
+            // Модель ещё грузится (первые доли секунды после запуска)
+            // или не нашлась вовсе.
             setState(.idle)
+            flashError()
             return
         }
-        let boundary = "giga-\(UUID().uuidString)"
-        var req = URLRequest(url: SERVER_URL)
-        req.httpMethod = "POST"
-        req.timeoutInterval = 120
-        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        var body = Data()
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"rec.wav\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
-        body.append(wav)
-        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-        req.httpBody = body
 
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, err in
+        recognizerQueue.async { [weak self] in
+            let текст: String
+            do {
+                текст = try r.transcribe(wavPath: WAV_PATH)
+            } catch {
+                NSLog("Гига Писарь: не распознал — \(error)")
+                DispatchQueue.main.async {
+                    self?.setState(.idle)
+                    self?.flashError()
+                }
+                return
+            }
             DispatchQueue.main.async {
                 self?.setState(.idle)
-                guard err == nil, let data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let text = json["text"] as? String, !text.isEmpty
-                else {
-                    self?.flashError()
-                    return
-                }
-                self?.paste(text)
+                if текст.isEmpty { self?.flashError() } else { self?.paste(текст) }
             }
-        }.resume()
+        }
     }
 
     func flashError() {
@@ -378,12 +392,13 @@ final class App: NSObject, NSApplicationDelegate {
         // Нажать ⌘V за пользователя можно только с разрешением Accessibility.
         let trusted = AXIsProcessTrusted() || CGPreflightPostEventAccess()
         guard trusted else {
-            // Системный промпт «Гига would like to control this computer…»
+            // Системный промпт «Giga Pisar would like to control this computer…»
             let opts = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(opts)
             let a = NSAlert()
-            a.messageText = "Ещё одно разрешение — и всё"
-            a.informativeText = "Текст уже в буфере — вставь его сам через ⌘V.\nВ появившемся системном окне нажми «Open System Settings» и включи «Гига» в списке Accessibility."
+            a.messageText = L("Ещё одно разрешение — и всё", "One more permission and you're set")
+            a.informativeText = L("Текст уже в буфере — вставь его сам через ⌘V.\nВ появившемся системном окне нажми «Open System Settings» и включи «Giga Pisar» в списке Accessibility.",
+                                  "The text is already on the clipboard — paste it with ⌘V.\nIn the system dialog, click “Open System Settings” and turn on “Giga Pisar” under Accessibility.")
             a.runModal()
             return
         }
