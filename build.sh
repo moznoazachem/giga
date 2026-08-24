@@ -29,7 +29,8 @@ rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 
 SOURCES=(main.swift swift/Ort.swift swift/Features.swift swift/Tokenizer.swift
-         swift/Recognizer.swift swift/Audio.swift swift/WavePanel.swift swift/Updates.swift)
+         swift/Recognizer.swift swift/Audio.swift swift/WavePanel.swift swift/Updates.swift
+         swift/Onboarding.swift)
 
 # универсальный бинарник: Apple Silicon + Intel в одном файле
 echo "── сборка"

@@ -77,14 +77,20 @@ scroll down to the blocked-app message → **Open Anyway**. (The old
 
 ### First run
 
-The app asks for three permissions, all required:
+A welcome window walks you through the **two** permissions, with live
+checkmarks (also available later via "Permissions…" in the menu):
 
-1. **Input Monitoring** — to see the push-to-talk key
-2. **Microphone** — to record your voice
-3. **Accessibility** — to insert text (pressing ⌘V for you)
+1. **Microphone** — to record your voice
+2. **Accessibility** — to insert text (pressing ⌘V for you)
 
 Enable the "Giga Pisar" toggle in the settings pane that opens — **via the
 system prompt, not the "+" button**.
+
+The push-to-talk key needs **no permission at all**: macOS guards the
+*content* of what you type, and modifier keys (⌘/⌥/⌃/Fn) aren't content.
+The app tracks only those — it cannot see your keystrokes even in principle.
+(Versions up to 2.1 asked for Input Monitoring for this; if you granted it
+back then, you can safely remove that entry in System Settings.)
 
 If a toggle is on but nothing works, the permissions database has a stale
 entry. Reset it:
@@ -93,7 +99,7 @@ entry. Reset it:
 tccutil reset Accessibility ru.panda.giga
 ```
 
-(same for `ListenEvent` and `Microphone`), then let the app request access again.
+(same for `Microphone`), then let the app request access again.
 
 ### Usage
 
@@ -203,14 +209,20 @@ open "/Applications/Giga Pisar.app"
 
 ### Первый запуск
 
-Приложение попросит три разрешения, все обязательны:
+Окно первого запуска проведёт по **двум** разрешениям, с живыми галочками
+(потом открывается через «Доступы…» в меню):
 
-1. **Input Monitoring** — видеть клавишу-рацию
-2. **Microphone** — записывать голос
-3. **Accessibility** — вставлять текст (нажимать ⌘V за тебя)
+1. **Микрофон** — записывать голос
+2. **Универсальный доступ** — вставлять текст (нажимать ⌘V за тебя)
 
 Включай тумблер «Giga Pisar» в открывшихся настройках — **через системный запрос,
 а не через «+»**.
+
+Клавиша-рация **не требует разрешений вовсе**: macOS охраняет *содержимое*
+набора, а модификаторы (⌘/⌥/⌃/Fn) содержимым не считаются. Приложение следит
+только за ними — твои нажатия букв оно не видит даже в принципе.
+(Версии до 2.1 просили для этого «Мониторинг ввода»; если выдавал его тогда —
+можешь спокойно убрать эту строчку в настройках.)
 
 Если тумблер включён, а не работает — в базе разрешений битая запись. Лечится так:
 
@@ -218,8 +230,7 @@ open "/Applications/Giga Pisar.app"
 tccutil reset Accessibility ru.panda.giga
 ```
 
-(и то же для `ListenEvent`, `Microphone`), после чего дать приложению
-запросить доступ заново.
+(и то же для `Microphone`), после чего дать приложению запросить доступ заново.
 
 ### Использование
 

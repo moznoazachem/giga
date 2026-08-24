@@ -34,15 +34,15 @@ let MIN_SECONDS = 0.4
 struct Hotkey {
     let id: String
     let title: String
-    let keycode: Int64
-    let flag: CGEventFlags
+    let keycode: UInt16
+    let flag: NSEvent.ModifierFlags
 }
 
 let HOTKEYS: [Hotkey] = [
-    Hotkey(id: "rcmd", title: L("Правый ⌘", "Right ⌘"), keycode: 54, flag: .maskCommand),
-    Hotkey(id: "ropt", title: L("Правый ⌥", "Right ⌥"), keycode: 61, flag: .maskAlternate),
-    Hotkey(id: "rctrl", title: L("Правый ⌃", "Right ⌃"), keycode: 62, flag: .maskControl),
-    Hotkey(id: "fn", title: "Fn (🌐)", keycode: 63, flag: .maskSecondaryFn),
+    Hotkey(id: "rcmd", title: L("Правый ⌘", "Right ⌘"), keycode: 54, flag: .command),
+    Hotkey(id: "ropt", title: L("Правый ⌥", "Right ⌥"), keycode: 61, flag: .option),
+    Hotkey(id: "rctrl", title: L("Правый ⌃", "Right ⌃"), keycode: 62, flag: .control),
+    Hotkey(id: "fn", title: "Fn (🌐)", keycode: 63, flag: .function),
 ]
 
 func currentHotkey() -> Hotkey {
@@ -88,7 +88,9 @@ final class App: NSObject, NSApplicationDelegate {
     var rightCmdDown = false
     var cancelled = false
     var animTimer: Timer?
-    var eventTap: CFMachPort?
+
+    /// Окно с разрешениями (первый запуск и пункт меню).
+    let onboarding = Onboarding()
 
     /// Модель. Грузится один раз в фоне; recognizer трогаем только из recognizerQueue.
     var recognizer: Recognizer?
@@ -106,7 +108,12 @@ final class App: NSObject, NSApplicationDelegate {
         setState(.idle)
         buildMenu()
         loadModel()
-        requestInputMonitoring()
+        startKeyMonitors()
+        if !Onboarding.allGranted {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.onboarding.show()
+            }
+        }
         // обновления: раз при запуске (чуть погодя) и дальше каждые 6 часов
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
             self?.checkUpdates(silent: true)
@@ -115,25 +122,6 @@ final class App: NSObject, NSApplicationDelegate {
             self?.checkUpdates(silent: true)
         }
     }
-
-    // Просим «Мониторинг ввода» системным диалогом и ждём, пока пользователь
-    // включит тумблер — затем сами создаём перехватчик, без перезапуска.
-    func requestInputMonitoring() {
-        if CGPreflightListenEventAccess() {
-            startEventTap()
-            return
-        }
-        CGRequestListenEventAccess() // системный промпт + Гига Писарь появляется в списке
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
-        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
-            if CGPreflightListenEventAccess() {
-                t.invalidate()
-                self?.startEventTap()
-            }
-        }
-    }
-
-    // MARK: состояние и иконка
 
     enum State { case idle, rec, busy }
 
@@ -210,6 +198,11 @@ final class App: NSObject, NSApplicationDelegate {
         login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         menu.addItem(login)
 
+        let perms = NSMenuItem(title: L("Доступы…", "Permissions…"),
+                               action: #selector(showOnboarding), keyEquivalent: "")
+        perms.target = self
+        menu.addItem(perms)
+
         menu.addItem(NSMenuItem.separator())
 
         // версия и обновления
@@ -242,6 +235,8 @@ final class App: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(id, forKey: "hotkey")
         buildMenu() // обновить галочки и заголовок
     }
+
+    @objc func showOnboarding() { onboarding.show() }
 
     @objc func toggleWave() {
         UserDefaults.standard.set(!waveEnabled, forKey: "wavePanel")
@@ -342,53 +337,42 @@ final class App: NSObject, NSApplicationDelegate {
         a.runModal()
     }
 
-    // MARK: перехват правого ⌘ (CGEventTap с самовосстановлением)
+    // MARK: перехват правого ⌘ — без разрешения «Мониторинг ввода»
+    //
+    // macOS охраняет СОДЕРЖИМОЕ набора: следить за обычными клавишами без
+    // Input Monitoring нельзя. А состояние модификаторов (⌘/⌥/⌃/Fn)
+    // содержимым не считается — NSEvent отдаёт его любому приложению.
+    // Наши клавиши-рации все модификаторы, так что перехватчик всей
+    // клавиатуры был избыточен; проверено опытом: flagsChanged приходит
+    // без разрешений, keyDown — нет.
 
-    func startEventTap() {
-        let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
-        let callback: CGEventTapCallBack = { _, type, event, refcon in
-            let app = Unmanaged<App>.fromOpaque(refcon!).takeUnretainedValue()
-            // macOS отключил tap за медлительность — включаем обратно сразу
-            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                if let tap = app.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-                return Unmanaged.passUnretained(event)
-            }
-            DispatchQueue.main.async { app.handle(type: type, event: event) }
-            return Unmanaged.passUnretained(event)
+    func startKeyMonitors() {
+        NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
+            self?.handleFlags(e)
         }
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap, place: .headInsertEventTap,
-            options: .listenOnly, eventsOfInterest: CGEventMask(mask),
-            callback: callback, userInfo: refcon
-        ) else {
-            let a = NSAlert()
-            a.messageText = L("Гига Писарю нужен «Мониторинг ввода» (Input Monitoring)", "Giga Pisar needs Input Monitoring")
-            a.informativeText = L("System Settings → Privacy & Security → Input Monitoring → включи «Giga Pisar».",
-                                  "System Settings → Privacy & Security → Input Monitoring → turn on “Giga Pisar”.")
-            a.runModal()
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
-            return
+        // когда активны мы сами (открыто наше меню) — события идут локально
+        NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
+            self?.handleFlags(e)
+            return e
         }
-        eventTap = tap
-        let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        // Буква, нажатая при зажатой рации, значит «это шорткат, не диктовка» —
+        // тогда запись отменяется. Такие события система отдаёт только
+        // с разрешением «Универсальный доступ» (оно и так нужно для вставки);
+        // пока его нет, просто не работает эта мелочь, а диктовка работает.
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
+            guard let self, self.rightCmdDown else { return }
+            self.stopRecording(abort: true)
+        }
     }
 
-    func handle(type: CGEventType, event: CGEvent) {
+    func handleFlags(_ e: NSEvent) {
         let hk = currentHotkey()
-        if type == .keyDown {
-            if rightCmdDown { stopRecording(abort: true) } // клавиша+буква = шорткат
-            return
-        }
-        guard type == .flagsChanged,
-              event.getIntegerValueField(.keyboardEventKeycode) == hk.keycode else { return }
-        let pressed = event.flags.contains(hk.flag)
-        if pressed {
+        guard e.keyCode == hk.keycode else { return }
+        let pressed = e.modifierFlags.contains(hk.flag)
+        if pressed, !rightCmdDown {
             rightCmdDown = true
             startRecording()
-        } else {
+        } else if !pressed, rightCmdDown {
             rightCmdDown = false
             stopRecording(abort: false)
         }
