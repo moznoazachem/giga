@@ -121,8 +121,11 @@ automatically: you get a notice and a link to the releases page.
 
 ### Limitations
 
-- Russian only. English speech comes out in Cyrillic ("зэ квик браун фокс") —
-  use Whisper for English
+- Built for Russian — **including English words sprinkled into Russian speech**:
+  tech terms and brand names come out fine, often in Latin script ("проверь
+  pull request на GitHub"). Dictating *entirely* in English doesn't work well:
+  you get Latin letters but phonetic spelling ("Hower you today") — use
+  Whisper for full English dictation
 - Internet is needed once, to download the model; offline after that
 
 ### Credits
@@ -253,8 +256,11 @@ tccutil reset Accessibility ru.panda.giga
 
 ### Ограничения
 
-- Русский язык. Английскую речь модель пишет кириллицей («зэ квик браун фокс»),
-  для английского нужен Whisper
+- Заточено под русский — **включая английские слова внутри русской речи**:
+  термины и названия распознаются нормально, часто латиницей («проверь
+  pull request на GitHub»). А вот диктовать *целиком* по-английски не выйдет:
+  буквы будут латинские, но написание фонетическое («Hower you today») —
+  для полностью английской диктовки нужен Whisper
 - Интернет нужен один раз — скачать модель, дальше офлайн
 
 ### Благодарности
