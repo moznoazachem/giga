@@ -103,6 +103,9 @@ final class App: NSObject, NSApplicationDelegate {
     /// Номер версии с GitHub, если она новее нашей.
     var updateAvailable: String?
 
+    /// Последняя удачная диктовка — страховка на случай «курсор был не в поле».
+    var lastText: String?
+
 
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -224,6 +227,12 @@ final class App: NSObject, NSApplicationDelegate {
             menu.addItem(unpin)
         }
 
+        let lastItem = NSMenuItem(title: L("Скопировать последнюю диктовку", "Copy last dictation"),
+                                  action: #selector(copyLast), keyEquivalent: "")
+        lastItem.target = self
+        lastItem.isEnabled = lastText != nil
+        menu.addItem(lastItem)
+
         let perms = NSMenuItem(title: L("Доступы…", "Permissions…"),
                                action: #selector(showOnboarding), keyEquivalent: "")
         perms.target = self
@@ -263,6 +272,14 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func showOnboarding() { onboarding.show() }
+
+    @objc func copyLast() {
+        guard let t = lastText else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(t, forType: .string)
+        Toast.shared.show(L("В буфере — нажми ⌘V", "On the clipboard — press ⌘V"), seconds: 2)
+    }
 
     @objc func pickWaveColor(_ sender: NSMenuItem) {
         UserDefaults.standard.set(sender.representedObject as? String, forKey: "waveColor")
@@ -511,11 +528,20 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func paste(_ text: String) {
+        lastText = text
+        buildMenu() // в меню оживает «Скопировать последнюю диктовку»
+
         // Вставляем через буфер (быстро и надёжно), старое содержимое возвращаем.
         let pb = NSPasteboard.general
         let old = pb.string(forType: .string)
         pb.clearContents()
         pb.setString(text, forType: .string)
+
+        // Есть ли куда вставлять? Каретка видна — курсор точно в тексте.
+        // Не видна — либо поля нет, либо приложение её не показывает
+        // (бывает у построенных на Electron): тогда ⌘V всё равно нажмём,
+        // но буфер НЕ затираем и подсказываем — так диктовка не теряется.
+        let вПоле = caretRect() != nil
         // Нажать ⌘V за пользователя можно только с разрешением Accessibility.
         let trusted = AXIsProcessTrusted() || CGPreflightPostEventAccess()
         guard trusted else {
@@ -536,11 +562,16 @@ final class App: NSObject, NSApplicationDelegate {
         up?.flags = .maskCommand
         down?.post(tap: .cgSessionEventTap)
         up?.post(tap: .cgSessionEventTap)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            if let old {
-                pb.clearContents()
-                pb.setString(old, forType: .string)
+        if вПоле {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                if let old {
+                    pb.clearContents()
+                    pb.setString(old, forType: .string)
+                }
             }
+        } else {
+            Toast.shared.show(L("Курсор был не в тексте — диктовка в буфере, нажми ⌘V",
+                                "The cursor wasn't in a text field — your dictation is on the clipboard, press ⌘V"))
         }
     }
 }

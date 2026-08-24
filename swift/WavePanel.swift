@@ -17,7 +17,8 @@ func typingAnchor() -> NSPoint {
 
 /// Прямоугольник текстовой каретки в кокоа-координатах, если приложение
 /// её отдаёт. Многие (особенно на Electron) не отдают — тогда nil.
-private func caretRect() -> NSRect? {
+/// Заодно служит проверкой «курсор стоит в тексте»: есть каретка — есть поле.
+func caretRect() -> NSRect? {
     var focusedRef: CFTypeRef?
     guard AXUIElementCopyAttributeValue(AXUIElementCreateSystemWide(),
                                         "AXFocusedUIElement" as CFString,
@@ -92,6 +93,58 @@ final class WaveView: NSView {
             let r = NSRect(x: x0 + CGFloat(i) * (barW + gap),
                            y: (bounds.height - h) / 2, width: barW, height: h)
             NSBezierPath(roundedRect: r, xRadius: barW / 2, yRadius: barW / 2).fill()
+        }
+    }
+}
+
+/// Короткая всплывашка с текстом — для случаев вроде «курсор был не в поле».
+final class Toast {
+    static let shared = Toast()
+    private let panel: NSPanel
+    private let label = NSTextField(labelWithString: "")
+
+    private init() {
+        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: true)
+        panel.level = .statusBar
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+        // тот же стиль, что у плашки с волной: белая, с тонкой окантовкой
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .black.withAlphaComponent(0.85)
+        label.alignment = .center
+        let box = NSView()
+        box.wantsLayer = true
+        box.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.96).cgColor
+        box.layer?.cornerRadius = 13
+        box.layer?.borderWidth = 1
+        box.layer?.borderColor = NSColor.black.withAlphaComponent(0.12).cgColor
+        box.addSubview(label)
+        panel.contentView = box
+    }
+
+    func show(_ text: String, seconds: Double = 3.5) {
+        label.stringValue = text
+        label.sizeToFit()
+        let pad: CGFloat = 12
+        let size = NSSize(width: label.frame.width + pad * 2,
+                          height: label.frame.height + pad)
+        label.setFrameOrigin(NSPoint(x: pad, y: pad / 2))
+        let p = NSEvent.mouseLocation
+        var origin = NSPoint(x: p.x + 14, y: p.y - size.height - 12)
+        let screen = NSScreen.screens.first { $0.frame.contains(p) } ?? NSScreen.main
+        if let f = screen?.visibleFrame {
+            origin.x = min(max(origin.x, f.minX + 4), f.maxX - size.width - 4)
+            origin.y = min(max(origin.y, f.minY + 4), f.maxY - size.height - 4)
+        }
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        panel.orderFrontRegardless()
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            self?.panel.orderOut(nil)
         }
     }
 }
