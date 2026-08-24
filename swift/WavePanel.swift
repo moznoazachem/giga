@@ -51,16 +51,13 @@ private func caretRect() -> NSRect? {
 final class WaveView: NSView {
     var busy = false
     private var heights: [CGFloat] = [0.4, 0.6, 0.8, 0.6, 0.4]
-    private var targets: [CGFloat] = [0.4, 0.6, 0.8, 0.6, 0.4]
 
-    /// Эквалайзер: каждый столбик прыгает сам по себе, независимо от
-    /// соседей, — не бегущая волна, а живая гребёнка.
+    /// Один в один как иконка в трее: каждый столбик каждый кадр прыгает
+    /// на случайную высоту, без сглаживания. Оба кормит один таймер,
+    /// так что пляшут они синхронно по темпу.
     func tick() {
         for i in 0..<heights.count {
-            if Int.random(in: 0...1) == 0 {
-                targets[i] = CGFloat.random(in: 0.15...1.0)
-            }
-            heights[i] += (targets[i] - heights[i]) * 0.55
+            heights[i] = CGFloat.random(in: 0.2...1.0)
         }
         needsDisplay = true
     }
