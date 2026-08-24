@@ -85,6 +85,9 @@ sleep 1
 if [ -d "$DEST" ]; then rm -rf "$DEST"; fi
 cp -R "$APP" "$DEST"
 
+# Сборка погасила работающую копию — запускаем новую, чтобы диктовка
+# не пропадала молча до следующего входа в систему.
+open "$DEST"
+
 echo
-echo "✓ Установлено: $DEST  ($(du -sh "$DEST" | cut -f1))"
-echo "  запустить:   open \"$DEST\""
+echo "✓ Установлено и запущено: $DEST  ($(du -sh "$DEST" | cut -f1))"
