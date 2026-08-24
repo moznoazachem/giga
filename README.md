@@ -106,9 +106,10 @@ tccutil reset Accessibility ru.panda.giga
 - **Hold right ⌘** (configurable in the menu) → speak → release → text is inserted
 - Menu bar icon: waveform — ready; red dancing — recording; dots — transcribing
 - Click the icon for: mouse-driven recording, key selection, launch at login
-- **Wave near cursor** — a small floating pill with your live voice level appears
-  next to the text caret while you dictate (falls back to the mouse pointer when
-  the app won't reveal its caret). Toggle it in the menu
+- **Wave near cursor** — a small floating pill with an equalizer animation
+  appears next to the text caret while you dictate (falls back to the mouse
+  pointer when the app won't reveal its caret). Drag it anywhere — it remembers
+  the spot; pick its color in the menu, or toggle it off entirely
 - Long dictations are split on pauses between phrases and stitched back together
 
 ### Updates
@@ -238,8 +239,9 @@ tccutil reset Accessibility ru.panda.giga
 - Иконка в строке меню: волна — готова; красная пляшет — запись; точки — распознаёт
 - Меню по клику: запись мышкой, выбор клавиши, автозапуск при входе
 - **Волна у курсора** — во время диктовки рядом с текстовой кареткой появляется
-  плашка, столбики которой пляшут от настоящей громкости голоса (если приложение
-  не отдаёт каретку — плашка встаёт у указателя мыши). Отключается в меню
+  плашка с анимацией-эквалайзером (если приложение не отдаёт каретку — плашка
+  встаёт у указателя мыши). Её можно перетащить — место запомнится; цвет
+  выбирается в меню, а можно выключить совсем
 - Длинные диктовки режутся по паузам между фразами и склеиваются
 
 ### Обновления

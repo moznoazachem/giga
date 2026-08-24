@@ -3,7 +3,9 @@
 // Волна в строке меню наверху видна плохо, когда экран большой и смотришь
 // на курсор. Эта плашка появляется у текстовой каретки (спрашиваем через
 // Accessibility, разрешение и так есть), а если каретку не отдали —
-// у указателя мыши. Столбики пляшут от настоящей громкости голоса.
+// у указателя мыши. Анимация виртуальная, в стиле эквалайзера: она говорит
+// «идёт запись», а не показывает громкость — честная громкость выглядела
+// вялой из-за инерции измерителя Apple.
 
 import AppKit
 
@@ -47,35 +49,49 @@ private func caretRect() -> NSRect? {
 }
 
 final class WaveView: NSView {
-    var level: Float = 0
     var busy = false
-    private var phase = 0.0
+    private var heights: [CGFloat] = [0.4, 0.6, 0.8, 0.6, 0.4]
+    private var targets: [CGFloat] = [0.4, 0.6, 0.8, 0.6, 0.4]
 
-    func tick(level newLevel: Float) {
-        level = newLevel
-        phase += 0.45
+    /// Эквалайзер: каждый столбик прыгает сам по себе, независимо от
+    /// соседей, — не бегущая волна, а живая гребёнка.
+    func tick() {
+        for i in 0..<heights.count {
+            if Int.random(in: 0...1) == 0 {
+                targets[i] = CGFloat.random(in: 0.15...1.0)
+            }
+            heights[i] += (targets[i] - heights[i]) * 0.55
+        }
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2,
-                     yRadius: bounds.height / 2).addClip()
-        NSColor.black.withAlphaComponent(0.72).setFill()
-        bounds.fill()
+        // светлая плашка: белая, с тонкой окантовкой, чтобы читалась
+        // и на белом фоне, и на тёмном
+        let pill = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                                xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+        NSColor.white.withAlphaComponent(0.96).setFill()
+        pill.fill()
+        NSColor.black.withAlphaComponent(0.12).setStroke()
+        pill.lineWidth = 1
+        pill.stroke()
 
-        let bars = 5
-        let mult: [CGFloat] = [0.45, 0.75, 1.0, 0.75, 0.45]
+        let bars = heights.count
         let barW: CGFloat = 4
         let gap: CGFloat = 4
         let totalW = CGFloat(bars) * barW + CGFloat(bars - 1) * gap
         let x0 = (bounds.width - totalW) / 2
-        let maxH = bounds.height - 10
+        let maxH = bounds.height - 8
 
-        (busy ? NSColor.systemGray : NSColor.systemRed).setFill()
+        // цвет столбиков выбирается в меню приложения
+        let chosen = UserDefaults.standard.string(forKey: "waveColor") ?? "dark"
+        let barColor: NSColor = chosen == "green" ? .systemGreen
+            : chosen == "red" ? .systemRed
+            : .black.withAlphaComponent(0.78)
+        (busy ? NSColor.black.withAlphaComponent(0.25) : barColor).setFill()
         for i in 0..<bars {
-            let sway = busy ? 0.35 : 0.15 + 0.85 * CGFloat(level)
-                * (0.65 + 0.35 * CGFloat(sin(phase + Double(i) * 1.1)))
-            let h = max(3, maxH * mult[i] * sway)
+            let sway = busy ? 0.35 : heights[i]
+            let h = max(3, maxH * sway)
             let r = NSRect(x: x0 + CGFloat(i) * (barW + gap),
                            y: (bounds.height - h) / 2, width: barW, height: h)
             NSBezierPath(roundedRect: r, xRadius: barW / 2, yRadius: barW / 2).fill()
@@ -86,6 +102,24 @@ final class WaveView: NSView {
 final class WavePanel {
     private let panel: NSPanel
     private let view = WaveView()
+    private var movingProgrammatically = false
+
+    /// Куда пользователь перетащил плашку. Пока не таскал — nil,
+    /// и плашка ходит за текстовой кареткой.
+    static var pinned: NSPoint? {
+        get {
+            guard let s = UserDefaults.standard.string(forKey: "wavePos") else { return nil }
+            let parts = s.split(separator: ",").compactMap { Double($0) }
+            return parts.count == 2 ? NSPoint(x: parts[0], y: parts[1]) : nil
+        }
+        set {
+            if let p = newValue {
+                UserDefaults.standard.set("\(p.x),\(p.y)", forKey: "wavePos")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "wavePos")
+            }
+        }
+    }
 
     init() {
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 78, height: 26),
@@ -95,28 +129,42 @@ final class WavePanel {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = view
+
+        // Плашку можно перетащить — тогда она запоминает место и больше
+        // не бегает за кареткой (вернуть — пункт в меню приложения).
+        panel.isMovableByWindowBackground = true
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            guard let self, !self.movingProgrammatically else { return }
+            Self.pinned = self.panel.frame.origin
+            // в меню появляется пункт «Вернуть волну к курсору»
+            (NSApp.delegate as? App)?.buildMenu()
+        }
     }
 
-    /// Показывает плашку возле точки, не вылезая за край экрана.
+    /// Показывает плашку: на прибитом месте, если её перетаскивали,
+    /// иначе возле точки набора — и в любом случае не за краем экрана.
     func show(near p: NSPoint) {
         let size = panel.frame.size
-        var origin = NSPoint(x: p.x + 14, y: p.y - size.height - 10)
-        let screen = NSScreen.screens.first { $0.frame.contains(p) } ?? NSScreen.main
+        var origin = Self.pinned ?? NSPoint(x: p.x + 14, y: p.y - size.height - 10)
+        let anchor = Self.pinned ?? p
+        let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main
         if let f = screen?.visibleFrame {
             origin.x = min(max(origin.x, f.minX + 4), f.maxX - size.width - 4)
             origin.y = min(max(origin.y, f.minY + 4), f.maxY - size.height - 4)
         }
         view.busy = false
-        view.level = 0
+        movingProgrammatically = true
         panel.setFrameOrigin(origin)
+        movingProgrammatically = false
         panel.orderFrontRegardless()
     }
 
-    func update(level: Float) { view.tick(level: level) }
+    func tick() { view.tick() }
 
     func busy() {
         view.busy = true

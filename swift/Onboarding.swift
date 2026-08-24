@@ -105,6 +105,11 @@ final class Onboarding: NSObject {
     }
 
     private func refresh() {
+        // окно закрыли крестиком — опрашивать больше некого
+        if window?.isVisible != true {
+            timer?.invalidate()
+            return
+        }
         for (i, check) in checks.enumerated() {
             let ok = check()
             marks[i].stringValue = ok ? "✓" : "○"

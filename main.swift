@@ -103,6 +103,8 @@ final class App: NSObject, NSApplicationDelegate {
     /// Номер версии с GitHub, если она новее нашей.
     var updateAvailable: String?
 
+
+
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setState(.idle)
@@ -133,19 +135,15 @@ final class App: NSObject, NSApplicationDelegate {
             statusItem.button?.image = barsImage([5, 9, 13, 9, 5], red: false)
             wave.hide()
         case .rec:
+            // Анимация виртуальная: нажал — сразу пошла. Стиль — эквалайзер:
+            // столбики прыгают независимо. От настоящей громкости отказались:
+            // у измерителя Apple инерция, и честная волна выглядела вялой.
             statusItem.button?.image = barsImage([6, 11, 14, 11, 6], red: true)
-            animTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            animTimer = Timer.scheduledTimer(withTimeInterval: 0.09, repeats: true) { [weak self] _ in
                 guard let self else { return }
-                // настоящая громкость: децибелы -45…0 приводим к 0…1
-                var lvl: Float = 0
-                if let r = self.recorder {
-                    r.updateMeters()
-                    lvl = max(0, min(1, (r.averagePower(forChannel: 0) + 45) / 42))
-                }
-                let mult: [CGFloat] = [0.5, 0.8, 1.0, 0.8, 0.5]
-                let h = mult.map { 3 + (11 * CGFloat(lvl) + CGFloat.random(in: 0...2)) * $0 }
+                let h = (0..<5).map { _ in CGFloat.random(in: 3...14) }
                 self.statusItem.button?.image = barsImage(h, red: true)
-                self.wave.update(level: lvl)
+                self.wave.tick()
             }
         case .busy:
             wave.busy() // серые столбики: «услышал, распознаю»
@@ -160,6 +158,9 @@ final class App: NSObject, NSApplicationDelegate {
 
     func buildMenu() {
         let menu = NSMenu()
+        // включённостью пунктов управляем сами: серые должны быть серыми,
+        // даже если у них есть подменю
+        menu.autoenablesItems = false
 
         let header = NSMenuItem(title: L("Гига Писарь — диктовка (зажми \(currentHotkey().title))",
                                      "Giga Pisar — dictation (hold \(currentHotkey().title))"), action: nil, keyEquivalent: "")
@@ -192,11 +193,36 @@ final class App: NSObject, NSApplicationDelegate {
         waveItem.state = waveEnabled ? .on : .off
         menu.addItem(waveItem)
 
+        // цвет волны — без волны выбирать нечего
+        let colorItem = NSMenuItem(title: L("Цвет волны", "Wave color"), action: nil, keyEquivalent: "")
+        colorItem.isEnabled = waveEnabled
+        let colorMenu = NSMenu()
+        let current = UserDefaults.standard.string(forKey: "waveColor") ?? "dark"
+        for (id, name) in [("dark", L("Тёмный", "Dark")),
+                           ("green", L("Зелёный", "Green")),
+                           ("red", L("Красный", "Red"))] {
+            let it = NSMenuItem(title: name, action: #selector(pickWaveColor(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = id
+            it.state = current == id ? .on : .off
+            colorMenu.addItem(it)
+        }
+        colorItem.submenu = colorMenu
+        menu.addItem(colorItem)
+
         // автозапуск при входе
         let login = NSMenuItem(title: L("Запускать при входе", "Open at login"), action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         menu.addItem(login)
+
+        if WavePanel.pinned != nil {
+            let unpin = NSMenuItem(title: L("Вернуть волну к курсору", "Wave: follow cursor again"),
+                                   action: #selector(unpinWave), keyEquivalent: "")
+            unpin.target = self
+            unpin.isEnabled = waveEnabled
+            menu.addItem(unpin)
+        }
 
         let perms = NSMenuItem(title: L("Доступы…", "Permissions…"),
                                action: #selector(showOnboarding), keyEquivalent: "")
@@ -237,6 +263,16 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func showOnboarding() { onboarding.show() }
+
+    @objc func pickWaveColor(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.representedObject as? String, forKey: "waveColor")
+        buildMenu()
+    }
+
+    @objc func unpinWave() {
+        WavePanel.pinned = nil
+        buildMenu()
+    }
 
     @objc func toggleWave() {
         UserDefaults.standard.set(!waveEnabled, forKey: "wavePanel")
@@ -409,7 +445,6 @@ final class App: NSObject, NSApplicationDelegate {
         ]
         do {
             let r = try AVAudioRecorder(url: URL(fileURLWithPath: WAV_PATH), settings: settings)
-            r.isMeteringEnabled = true // столбики пляшут от настоящей громкости
             r.record()
             recorder = r
             recStart = Date()
