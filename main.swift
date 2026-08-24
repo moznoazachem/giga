@@ -26,6 +26,7 @@ func findModelDir() -> String? {
     }
     return nil
 }
+let APP_VERSION = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
 let WAV_PATH = NSTemporaryDirectory() + "giga_rec.wav"
 let MIN_SECONDS = 0.4
 
@@ -89,9 +90,16 @@ final class App: NSObject, NSApplicationDelegate {
     var animTimer: Timer?
     var eventTap: CFMachPort?
 
-    /// Модель. Грузится один раз в фоне, чтобы первая же диктовка не ждала.
+    /// Модель. Грузится один раз в фоне; recognizer трогаем только из recognizerQueue.
     var recognizer: Recognizer?
     let recognizerQueue = DispatchQueue(label: "ru.panda.giga.recognizer")
+
+    /// Плашка с волной у места набора (выключается в меню).
+    let wave = WavePanel()
+    var waveEnabled: Bool { UserDefaults.standard.object(forKey: "wavePanel") as? Bool ?? true }
+
+    /// Номер версии с GitHub, если она новее нашей.
+    var updateAvailable: String?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -99,6 +107,13 @@ final class App: NSObject, NSApplicationDelegate {
         buildMenu()
         loadModel()
         requestInputMonitoring()
+        // обновления: раз при запуске (чуть погодя) и дальше каждые 6 часов
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            self?.checkUpdates(silent: true)
+        }
+        Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            self?.checkUpdates(silent: true)
+        }
     }
 
     // Просим «Мониторинг ввода» системным диалогом и ждём, пока пользователь
@@ -128,13 +143,24 @@ final class App: NSObject, NSApplicationDelegate {
         switch s {
         case .idle:
             statusItem.button?.image = barsImage([5, 9, 13, 9, 5], red: false)
+            wave.hide()
         case .rec:
             statusItem.button?.image = barsImage([6, 11, 14, 11, 6], red: true)
-            animTimer = Timer.scheduledTimer(withTimeInterval: 0.13, repeats: true) { [weak self] _ in
-                let h = (0..<5).map { _ in CGFloat.random(in: 3...14) }
-                self?.statusItem.button?.image = barsImage(h, red: true)
+            animTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                // настоящая громкость: децибелы -45…0 приводим к 0…1
+                var lvl: Float = 0
+                if let r = self.recorder {
+                    r.updateMeters()
+                    lvl = max(0, min(1, (r.averagePower(forChannel: 0) + 45) / 42))
+                }
+                let mult: [CGFloat] = [0.5, 0.8, 1.0, 0.8, 0.5]
+                let h = mult.map { 3 + (11 * CGFloat(lvl) + CGFloat.random(in: 0...2)) * $0 }
+                self.statusItem.button?.image = barsImage(h, red: true)
+                self.wave.update(level: lvl)
             }
         case .busy:
+            wave.busy() // серые столбики: «услышал, распознаю»
             var tick = 0
             statusItem.button?.image = dotsImage(1)
             animTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
@@ -171,11 +197,35 @@ final class App: NSObject, NSApplicationDelegate {
         keyItem.submenu = keyMenu
         menu.addItem(keyItem)
 
+        // плашка с волной у места набора
+        let waveItem = NSMenuItem(title: L("Волна у курсора", "Wave near cursor"),
+                                  action: #selector(toggleWave), keyEquivalent: "")
+        waveItem.target = self
+        waveItem.state = waveEnabled ? .on : .off
+        menu.addItem(waveItem)
+
         // автозапуск при входе
         let login = NSMenuItem(title: L("Запускать при входе", "Open at login"), action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         menu.addItem(login)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // версия и обновления
+        if let upd = updateAvailable {
+            let it = NSMenuItem(title: L("Доступна версия \(upd) — скачать", "Version \(upd) available — download"),
+                                action: #selector(openReleases), keyEquivalent: "")
+            it.target = self
+            menu.addItem(it)
+        }
+        let ver = NSMenuItem(title: L("Версия \(APP_VERSION)", "Version \(APP_VERSION)"), action: nil, keyEquivalent: "")
+        ver.isEnabled = false
+        menu.addItem(ver)
+        let check = NSMenuItem(title: L("Проверить обновления…", "Check for updates…"),
+                               action: #selector(checkUpdatesManual), keyEquivalent: "")
+        check.target = self
+        menu.addItem(check)
 
         menu.addItem(NSMenuItem.separator())
         let quit = NSMenuItem(title: L("Выйти", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -191,6 +241,62 @@ final class App: NSObject, NSApplicationDelegate {
         guard let id = sender.representedObject as? String else { return }
         UserDefaults.standard.set(id, forKey: "hotkey")
         buildMenu() // обновить галочки и заголовок
+    }
+
+    @objc func toggleWave() {
+        UserDefaults.standard.set(!waveEnabled, forKey: "wavePanel")
+        if !waveEnabled { wave.hide() }
+        buildMenu()
+    }
+
+    @objc func openReleases() {
+        if let url = URL(string: RELEASES_PAGE) { NSWorkspace.shared.open(url) }
+    }
+
+    @objc func checkUpdatesManual() { checkUpdates(silent: false) }
+
+    /// silent — фоновая проверка: молчит, если новостей нет, и об одной и той
+    /// же версии напоминает окном только один раз (дальше — пункт в меню).
+    func checkUpdates(silent: Bool) {
+        fetchLatestVersion { [weak self] latest in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard let latest else {
+                    if !silent {
+                        let a = NSAlert()
+                        a.messageText = L("Не удалось проверить", "Couldn't check")
+                        a.informativeText = L("GitHub не ответил. Попробуй позже.",
+                                              "GitHub didn't respond. Try again later.")
+                        a.runModal()
+                    }
+                    return
+                }
+                guard isNewerVersion(latest, than: APP_VERSION) else {
+                    self.updateAvailable = nil
+                    if !silent {
+                        let a = NSAlert()
+                        a.messageText = L("У тебя последняя версия", "You're up to date")
+                        a.informativeText = L("Версия \(APP_VERSION) — новее на GitHub нет.",
+                                              "Version \(APP_VERSION) is the latest.")
+                        a.runModal()
+                    }
+                    return
+                }
+                self.updateAvailable = latest
+                self.buildMenu()
+                let seen = UserDefaults.standard.string(forKey: "lastUpdateNotified")
+                if !silent || seen != latest {
+                    UserDefaults.standard.set(latest, forKey: "lastUpdateNotified")
+                    let a = NSAlert()
+                    a.messageText = L("Вышла версия \(latest)", "Version \(latest) is out")
+                    a.informativeText = L("У тебя \(APP_VERSION). Скачать со страницы выпуска?",
+                                          "You have \(APP_VERSION). Download from the releases page?")
+                    a.addButton(withTitle: L("Скачать", "Download"))
+                    a.addButton(withTitle: L("Позже", "Later"))
+                    if a.runModal() == .alertFirstButtonReturn { self.openReleases() }
+                }
+            }
+        }
     }
 
     @objc func toggleLogin() {
@@ -220,8 +326,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         recognizerQueue.async { [weak self] in
             do {
-                let r = try Recognizer(modelDir: dir)
-                DispatchQueue.main.async { self?.recognizer = r }
+                self?.recognizer = try Recognizer(modelDir: dir)
             } catch {
                 NSLog("Гига Писарь: модель не загрузилась — \(error)")
                 DispatchQueue.main.async { self?.complainNoModel() }
@@ -320,11 +425,13 @@ final class App: NSObject, NSApplicationDelegate {
         ]
         do {
             let r = try AVAudioRecorder(url: URL(fileURLWithPath: WAV_PATH), settings: settings)
+            r.isMeteringEnabled = true // столбики пляшут от настоящей громкости
             r.record()
             recorder = r
             recStart = Date()
             cancelled = false
             setState(.rec)
+            if waveEnabled { wave.show(near: typingAnchor()) }
         } catch {
             setState(.idle)
         }
@@ -347,15 +454,17 @@ final class App: NSObject, NSApplicationDelegate {
 
     func transcribe() {
         setState(.busy)
-        guard let r = recognizer else {
-            // Модель ещё грузится (первые доли секунды после запуска)
-            // или не нашлась вовсе.
-            setState(.idle)
-            flashError()
-            return
-        }
-
         recognizerQueue.async { [weak self] in
+            guard let r = self?.recognizer else {
+                // Модель не нашлась вовсе (про это уже было окно при запуске).
+                // Если она ещё грузилась, мы сюда не попадём: загрузка стоит
+                // в этой же очереди первой, и работа дождалась её сама.
+                DispatchQueue.main.async {
+                    self?.setState(.idle)
+                    self?.flashError()
+                }
+                return
+            }
             let текст: String
             do {
                 текст = try r.transcribe(wavPath: WAV_PATH)

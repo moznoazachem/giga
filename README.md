@@ -100,7 +100,17 @@ tccutil reset Accessibility ru.panda.giga
 - **Hold right ⌘** (configurable in the menu) → speak → release → text is inserted
 - Menu bar icon: waveform — ready; red dancing — recording; dots — transcribing
 - Click the icon for: mouse-driven recording, key selection, launch at login
+- **Wave near cursor** — a small floating pill with your live voice level appears
+  next to the text caret while you dictate (falls back to the mouse pointer when
+  the app won't reveal its caret). Toggle it in the menu
 - Long dictations are split on pauses between phrases and stitched back together
+
+### Updates
+
+The menu shows the current version and a "Check for updates…" item. The app also
+asks GitHub every few hours whether a newer release exists — only the version
+number travels over the network, nothing else. Updates are never installed
+automatically: you get a notice and a link to the releases page.
 
 ### Limitations
 
@@ -216,7 +226,17 @@ tccutil reset Accessibility ru.panda.giga
 - **Зажми правый ⌘** (клавиша меняется в меню) → говори → отпусти → текст вставится
 - Иконка в строке меню: волна — готова; красная пляшет — запись; точки — распознаёт
 - Меню по клику: запись мышкой, выбор клавиши, автозапуск при входе
+- **Волна у курсора** — во время диктовки рядом с текстовой кареткой появляется
+  плашка, столбики которой пляшут от настоящей громкости голоса (если приложение
+  не отдаёт каретку — плашка встаёт у указателя мыши). Отключается в меню
 - Длинные диктовки режутся по паузам между фразами и склеиваются
+
+### Обновления
+
+В меню видна текущая версия и пункт «Проверить обновления…». Раз в несколько
+часов приложение само спрашивает GitHub, не вышла ли новая версия — по сети
+уходит только номер версии, больше ничего. Само оно ничего не устанавливает:
+покажет уведомление и ссылку на страницу выпуска.
 
 ### Ограничения
 
