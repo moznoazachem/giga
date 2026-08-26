@@ -146,8 +146,10 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     enum State { case idle, rec, busy }
+    var state: State = .idle
 
     func setState(_ s: State) {
+        state = s
         animTimer?.invalidate()
         animTimer = nil
         switch s {
@@ -326,9 +328,16 @@ final class App: NSObject, NSApplicationDelegate {
             return
         }
         guard !SelfUpdate.inProgress else { return }
-        Toast.shared.show(L("Скачиваю версию \(ver)… Поставлю и перезапущусь сам.",
-                            "Downloading \(ver)… I'll install it and relaunch."), seconds: 6)
-        SelfUpdate.run(zip: zip, version: ver) { [weak self] причина in
+        Toast.shared.show(L("Скачиваю версию \(ver)… Ход дела — в строке меню. Диктовка пока работает как обычно.",
+                            "Downloading \(ver)… Progress is in the menu bar. Dictation keeps working meanwhile."), seconds: 6)
+        SelfUpdate.run(zip: zip, version: ver, report: { [weak self] s in
+            // ход дела рядом с иконкой: «↓ 43%», потом «проверяю…»
+            self?.statusItem.button?.imagePosition = .imageLeft
+            self?.statusItem.button?.title = " " + s
+        }, ready: { [weak self] in
+            self?.quitForUpdateWhenIdle()
+        }, fail: { [weak self] причина in
+            self?.statusItem.button?.title = ""
             let a = NSAlert()
             a.messageText = L("Обновиться само не получилось", "Self-update didn't work")
             a.informativeText = L("Причина: \(причина).\nМожно скачать вручную со страницы выпуска — это просто замена приложения.",
@@ -336,7 +345,19 @@ final class App: NSObject, NSApplicationDelegate {
             a.addButton(withTitle: L("Открыть страницу", "Open the page"))
             a.addButton(withTitle: L("Позже", "Later"))
             if a.runModal() == .alertFirstButtonReturn { self?.openReleases() }
+        })
+    }
+
+    /// Обновление скачано и проверено; выходим на подмену, но вежливо:
+    /// посреди диктовки или распознавания не дёргаемся — ждём покоя.
+    func quitForUpdateWhenIdle() {
+        guard state == .idle else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.quitForUpdateWhenIdle()
+            }
+            return
         }
+        NSApp.terminate(nil)
     }
 
     @objc func openReleases() {

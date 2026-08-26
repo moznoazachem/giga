@@ -10,11 +10,65 @@
 //   3) bundle id совпадает — это точно Гига Писарь, а не что-то ещё.
 // Подмена — после выхода приложения, маленьким шелл-скриптом: ждёт выхода,
 // меняет бандл, запускает новый, прибирает за собой.
+//
+// Ход дела виден в строке меню: «↓ 43%» пока качается, потом «проверяю…» —
+// report() дёргается на главной очереди при каждой смене надписи.
 
 import AppKit
 
+/// Качает файл и рассказывает, сколько уже скачано. Живёт, пока качает.
+private final class Downloader: NSObject, URLSessionDownloadDelegate {
+    private let onPercent: (Int) -> Void
+    private let onDone: (URL?, String?) -> Void // (файл, причина беды)
+    private var session: URLSession!
+    private var lastPercent = -1
+
+    init(onPercent: @escaping (Int) -> Void, onDone: @escaping (URL?, String?) -> Void) {
+        self.onPercent = onPercent
+        self.onDone = onDone
+        super.init()
+        session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+    }
+
+    func download(_ url: URL) { session.downloadTask(with: url).resume() }
+
+    func urlSession(_ s: URLSession, downloadTask: URLSessionDownloadTask,
+                    didWriteData: Int64, totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        let p = Int(100 * totalBytesWritten / totalBytesExpectedToWrite)
+        guard p != lastPercent else { return } // не чаще раза на процент
+        lastPercent = p
+        DispatchQueue.main.async { self.onPercent(p) }
+    }
+
+    func urlSession(_ s: URLSession, downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        // временный файл живёт только внутри этого вызова — сразу забираем
+        let keep = NSTemporaryDirectory() + "giga-update-dl.zip"
+        try? FileManager.default.removeItem(atPath: keep)
+        do {
+            try FileManager.default.moveItem(atPath: location.path, toPath: keep)
+            onDone(URL(fileURLWithPath: keep), nil)
+        } catch {
+            onDone(nil, L("не сохранилось: \(error.localizedDescription)",
+                          "couldn't keep the download: \(error.localizedDescription)"))
+        }
+        s.finishTasksAndInvalidate()
+    }
+
+    func urlSession(_ s: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error {
+            onDone(nil, L("не скачалось: \(error.localizedDescription)",
+                          "download failed: \(error.localizedDescription)"))
+            s.finishTasksAndInvalidate()
+        }
+    }
+}
+
 enum SelfUpdate {
     private(set) static var inProgress = false
+    private static var downloader: Downloader? // держим, пока качает
 
     /// Команда подписи бандла («CXX972W555») или nil, если подписи нет.
     static func teamID(of path: String) -> String? {
@@ -48,12 +102,16 @@ enum SelfUpdate {
     }
 
     /// Качает zip выпуска, проверяет и подменяет работающее приложение.
-    /// При любой беде зовёт fail(причина) на главной очереди и НИЧЕГО не трогает.
-    static func run(zip: URL, version: String, fail: @escaping (String) -> Void) {
+    /// report(надпись) — что показать человеку; fail(причина) — беда;
+    /// оба зовутся на главной очереди, при беде НИЧЕГО не тронуто.
+    static func run(zip: URL, version: String,
+                    report: @escaping (String) -> Void,
+                    ready: @escaping () -> Void,
+                    fail: @escaping (String) -> Void) {
         guard !inProgress else { return }
         inProgress = true
         func bail(_ m: String) {
-            DispatchQueue.main.async { inProgress = false; fail(m) }
+            DispatchQueue.main.async { inProgress = false; downloader = nil; fail(m) }
         }
 
         let dest = Bundle.main.bundlePath
@@ -66,69 +124,80 @@ enum SelfUpdate {
             return
         }
 
-        let task = URLSession.shared.downloadTask(with: zip) { tmp, _, err in
-            guard let tmp, err == nil else {
-                bail(L("не скачалось: \(err?.localizedDescription ?? "обрыв")",
-                       "download failed: \(err?.localizedDescription ?? "interrupted")"))
-                return
-            }
-            let dir = NSTemporaryDirectory() + "giga-update-\(version)"
-            try? fm.removeItem(atPath: dir)
-            do {
-                try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-                try fm.moveItem(atPath: tmp.path, toPath: dir + "/update.zip")
-            } catch {
-                bail(L("не сохранилось во временную папку", "couldn't save to a temp folder"))
-                return
-            }
+        downloader = Downloader(
+            onPercent: { p in report("↓ \(p)%") },
+            onDone: { file, беда in
+                downloader = nil
+                guard let file else { bail(беда ?? "?"); return }
+                DispatchQueue.main.async { report(L("проверяю…", "verifying…")) }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    install(zipFile: file, version: version, dest: dest, ready: ready, bail: bail)
+                }
+            })
+        downloader?.download(zip)
+    }
 
-            let unzip = Process()
-            unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            unzip.arguments = ["-xk", dir + "/update.zip", dir]
-            do { try unzip.run(); unzip.waitUntilExit() } catch {
-                bail(L("архив не распаковался", "couldn't unpack the archive")); return
-            }
-            guard unzip.terminationStatus == 0,
-                  let name = (try? fm.contentsOfDirectory(atPath: dir))?
-                      .first(where: { $0.hasSuffix(".app") })
-            else {
-                bail(L("в архиве не нашлось приложения", "no app inside the archive")); return
-            }
-            let newApp = dir + "/" + name
-
-            // три замка
-            guard signatureIntact(newApp) else {
-                bail(L("подпись обновления повреждена", "the update's signature is broken")); return
-            }
-            guard let newTeam = teamID(of: newApp), newTeam == teamID(of: dest) else {
-                bail(L("обновление подписано не нами", "the update is signed by someone else")); return
-            }
-            guard Bundle(path: newApp)?.bundleIdentifier == Bundle.main.bundleIdentifier else {
-                bail(L("в архиве не Гига Писарь", "the archive isn't Giga Pisar")); return
-            }
-
-            // подмена после нашего выхода
-            let script = dir + "/swap.sh"
-            let sh = """
-            #!/bin/sh
-            while /bin/kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do /bin/sleep 0.3; done
-            /bin/rm -rf "\(dest)"
-            /usr/bin/ditto "\(newApp)" "\(dest)"
-            /usr/bin/open "\(dest)"
-            /bin/rm -rf "\(dir)"
-            """
-            do {
-                try sh.write(toFile: script, atomically: true, encoding: .utf8)
-                try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/bin/sh")
-                p.arguments = [script]
-                try p.run() // НЕ ждём: он ждёт нас
-            } catch {
-                bail(L("не запустился установщик", "the installer didn't start")); return
-            }
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+    /// Распаковка, три замка, подмена. Зовётся с фоновой очереди.
+    private static func install(zipFile: URL, version: String, dest: String,
+                                ready: @escaping () -> Void, bail: (String) -> Void) {
+        let fm = FileManager.default
+        let dir = NSTemporaryDirectory() + "giga-update-\(version)"
+        try? fm.removeItem(atPath: dir)
+        do {
+            try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try fm.moveItem(atPath: zipFile.path, toPath: dir + "/update.zip")
+        } catch {
+            bail(L("не сохранилось во временную папку", "couldn't save to a temp folder"))
+            return
         }
-        task.resume()
+
+        let unzip = Process()
+        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        unzip.arguments = ["-xk", dir + "/update.zip", dir]
+        do { try unzip.run(); unzip.waitUntilExit() } catch {
+            bail(L("архив не распаковался", "couldn't unpack the archive")); return
+        }
+        guard unzip.terminationStatus == 0,
+              let name = (try? fm.contentsOfDirectory(atPath: dir))?
+                  .first(where: { $0.hasSuffix(".app") })
+        else {
+            bail(L("в архиве не нашлось приложения", "no app inside the archive")); return
+        }
+        let newApp = dir + "/" + name
+
+        // три замка
+        guard signatureIntact(newApp) else {
+            bail(L("подпись обновления повреждена", "the update's signature is broken")); return
+        }
+        guard let newTeam = teamID(of: newApp), newTeam == teamID(of: dest) else {
+            bail(L("обновление подписано не нами", "the update is signed by someone else")); return
+        }
+        guard Bundle(path: newApp)?.bundleIdentifier == Bundle.main.bundleIdentifier else {
+            bail(L("в архиве не Гига Писарь", "the archive isn't Giga Pisar")); return
+        }
+
+        // подмена после нашего выхода
+        let script = dir + "/swap.sh"
+        let sh = """
+        #!/bin/sh
+        while /bin/kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do /bin/sleep 0.3; done
+        /bin/rm -rf "\(dest)"
+        /usr/bin/ditto "\(newApp)" "\(dest)"
+        /usr/bin/open "\(dest)"
+        /bin/rm -rf "\(dir)"
+        """
+        do {
+            try sh.write(toFile: script, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/sh")
+            p.arguments = [script]
+            try p.run() // НЕ ждём: он ждёт нас
+        } catch {
+            bail(L("не запустился установщик", "the installer didn't start")); return
+        }
+        // Всё готово и проверено. Когда выходить — решает приложение:
+        // если человек прямо сейчас диктует, оно дождётся конца.
+        DispatchQueue.main.async { ready() }
     }
 }
