@@ -42,6 +42,25 @@ enum Audio {
         throw OrtError.failed("в wav нет данных: \(path)")
     }
 
+    /// Пишет 16-битный моно wav — след последней диктовки, чтобы при
+    /// жалобе «вставился кусочек» можно было послушать, что реально
+    /// дошло до распознавания. Ошибки не смертельны: файл — только улика.
+    static func writeWav(_ samples: [Float], rate: Int, to path: String) {
+        var data = Data(capacity: 44 + samples.count * 2)
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+        func u16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+        let body = UInt32(samples.count * 2)
+        data.append(contentsOf: "RIFF".utf8); u32(36 + body)
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8); u32(16)
+        u16(1); u16(1); u32(UInt32(rate)); u32(UInt32(rate * 2)); u16(2); u16(16)
+        data.append(contentsOf: "data".utf8); u32(body)
+        for x in samples {
+            u16(UInt16(bitPattern: Int16(max(-32768, min(32767, Int(x * 32767))))))
+        }
+        try? data.write(to: URL(fileURLWithPath: path))
+    }
+
     /// Середины пауз — кандидаты в точки разреза.
     /// Повторяет ffmpeg silencedetect: тише порога дольше заданного времени.
     static func silences(_ x: [Float], rate: Int,

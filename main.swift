@@ -83,7 +83,7 @@ func dotsImage(_ count: Int) -> NSImage {
 
 final class App: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
-    var recorder: AVAudioRecorder?
+    let mic = Mic()
     var recStart: Date?
     var rightCmdDown = false
     var cancelled = false
@@ -111,6 +111,13 @@ final class App: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setState(.idle)
+        // В 2.3 волна из-за гонки записывала СВОЁ ЖЕ появление как
+        // перетаскивание и намертво прирастала к месту первого показа.
+        // Сохранённое место у всех ложное — забываем его один раз.
+        if !UserDefaults.standard.bool(forKey: "wavePinBugFixed2") {
+            UserDefaults.standard.set(true, forKey: "wavePinBugFixed2")
+            WavePanel.pinned = nil
+        }
         buildMenu()
         loadModel()
         startKeyMonitors()
@@ -142,11 +149,16 @@ final class App: NSObject, NSApplicationDelegate {
             // столбики прыгают независимо. От настоящей громкости отказались:
             // у измерителя Apple инерция, и честная волна выглядела вялой.
             statusItem.button?.image = barsImage([6, 11, 14, 11, 6], red: true)
+            var tick = 0
             animTimer = Timer.scheduledTimer(withTimeInterval: 0.09, repeats: true) { [weak self] _ in
                 guard let self else { return }
                 let h = (0..<5).map { _ in CGFloat.random(in: 3...14) }
                 self.statusItem.button?.image = barsImage(h, red: true)
                 self.wave.tick()
+                // окно с кареткой могли передвинуть прямо во время диктовки —
+                // раз в полсекунды спрашиваем место заново и едем за ним
+                tick += 1
+                if tick % 6 == 0, self.waveEnabled { self.wave.follow(typingAnchorIfKnown()) }
             }
         case .busy:
             wave.busy() // серые столбики: «услышал, распознаю»
@@ -262,7 +274,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func menuToggle() {
-        if recorder != nil { stopRecording(abort: false) } else { startRecording() }
+        if mic.isRecording { stopRecording(abort: false) } else { startRecording() }
     }
 
     @objc func pickHotkey(_ sender: NSMenuItem) {
@@ -434,7 +446,7 @@ final class App: NSObject, NSApplicationDelegate {
     // MARK: запись (родной AVAudioRecorder, 16 кГц моно wav)
 
     func startRecording() {
-        guard recorder == nil else { return }
+        guard !mic.isRecording else { return }
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             DispatchQueue.main.async {
                 guard granted else {
@@ -451,44 +463,51 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func beginRecording() {
-        guard recorder == nil else { return }
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 16000.0,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
-        ]
+        guard !mic.isRecording else { return }
         do {
-            let r = try AVAudioRecorder(url: URL(fileURLWithPath: WAV_PATH), settings: settings)
-            r.record()
-            recorder = r
-            recStart = Date()
-            cancelled = false
-            setState(.rec)
-            if waveEnabled { wave.show(near: typingAnchor()) }
+            try mic.start()
         } catch {
+            // Устройство не завелось (частый случай на виртуалках).
+            // Раньше мы в этом положении молча показывали волну — человек
+            // диктовал в пустоту. Теперь говорим сразу и словами.
+            NSLog("Гига Писарь: микрофон не завёлся — \(error)")
             setState(.idle)
+            Toast.shared.show(L("Микрофон не завёлся — звук не идёт. Проверь микрофон в настройках системы.",
+                                "The microphone didn't start — no audio. Check the microphone in System Settings."))
+            return
         }
+        recStart = Date()
+        cancelled = false
+        setState(.rec)
+        if waveEnabled { wave.show(near: typingAnchor()) }
     }
 
     func stopRecording(abort: Bool) {
-        guard let r = recorder else { return }
+        guard mic.isRecording else { return }
         cancelled = abort
-        r.stop()
-        recorder = nil
+        let samples = mic.stop()
         let dur = Date().timeIntervalSince(recStart ?? Date())
         if cancelled || dur < MIN_SECONDS {
             setState(.idle)
             return
         }
-        transcribe()
+        // Запись шла, а звука в ней нет — так отдают тишину сломанные
+        // и виртуальные драйверы. Красное мигание иконки легко пропустить,
+        // поэтому говорим словами, той же плашкой, что про курсор.
+        let peak = samples.reduce(Float(0)) { max($0, abs($1)) }
+        guard peak > 0.0015 else {
+            setState(.idle)
+            Toast.shared.show(L("Микрофон отдал тишину — звук до записи не дошёл",
+                                "The microphone delivered silence — no audio reached the recording"))
+            return
+        }
+        Audio.writeWav(samples, rate: 16000, to: WAV_PATH) // след для разбора полётов
+        transcribe(samples)
     }
 
     // MARK: распознавание и вставка
 
-    func transcribe() {
+    func transcribe(_ samples: [Float]) {
         setState(.busy)
         recognizerQueue.async { [weak self] in
             guard let r = self?.recognizer else {
@@ -503,7 +522,7 @@ final class App: NSObject, NSApplicationDelegate {
             }
             let текст: String
             do {
-                текст = try r.transcribe(wavPath: WAV_PATH)
+                текст = try r.transcribe(samples: samples, rate: 16000)
             } catch {
                 NSLog("Гига Писарь: не распознал — \(error)")
                 DispatchQueue.main.async {
@@ -537,11 +556,11 @@ final class App: NSObject, NSApplicationDelegate {
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        // Есть ли куда вставлять? Каретка видна — курсор точно в тексте.
-        // Не видна — либо поля нет, либо приложение её не показывает
-        // (бывает у построенных на Electron): тогда ⌘V всё равно нажмём,
-        // но буфер НЕ затираем и подсказываем — так диктовка не теряется.
-        let вПоле = caretRect() != nil
+        // Есть ли куда вставлять? Спрашиваем про сам фокус в текстовом поле,
+        // а не про координаты каретки: терминалы и Electron часто скрывают,
+        // ГДЕ каретка, но поле-то у них есть и ⌘V сработает. Если поля нет —
+        // ⌘V всё равно нажмём, но буфер НЕ затираем и подсказываем.
+        let вПоле = hasTextFocus()
         // Нажать ⌘V за пользователя можно только с разрешением Accessibility.
         let trusted = AXIsProcessTrusted() || CGPreflightPostEventAccess()
         guard trusted else {
