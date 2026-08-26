@@ -10,17 +10,22 @@ import Foundation
 let RELEASES_PAGE = "https://github.com/moznoazachem/giga/releases/latest"
 private let LATEST_API = "https://api.github.com/repos/moznoazachem/giga/releases/latest"
 
-/// Спрашивает у GitHub номер последнего выпуска («2.1»). nil — не дозвонились.
-func fetchLatestVersion(_ done: @escaping (String?) -> Void) {
-    guard let url = URL(string: LATEST_API) else { done(nil); return }
+/// Спрашивает у GitHub последний выпуск: номер («2.5») и ссылку на zip
+/// с приложением — для самообновления. nil — не дозвонились.
+func fetchLatestRelease(_ done: @escaping (String?, URL?) -> Void) {
+    guard let url = URL(string: LATEST_API) else { done(nil, nil); return }
     var req = URLRequest(url: url)
     req.timeoutInterval = 10
     URLSession.shared.dataTask(with: req) { data, _, _ in
         guard let data,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tag = json["tag_name"] as? String
-        else { done(nil); return }
-        done(tag.hasPrefix("v") ? String(tag.dropFirst()) : tag)
+        else { done(nil, nil); return }
+        let zip = (json["assets"] as? [[String: Any]])?
+            .first { ($0["name"] as? String)?.hasSuffix(".zip") == true }
+            .flatMap { $0["browser_download_url"] as? String }
+            .flatMap { URL(string: $0) }
+        done(tag.hasPrefix("v") ? String(tag.dropFirst()) : tag, zip)
     }.resume()
 }
 

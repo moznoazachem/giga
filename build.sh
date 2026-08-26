@@ -30,7 +30,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Framewor
 
 SOURCES=(main.swift swift/Ort.swift swift/Features.swift swift/Tokenizer.swift
          swift/Recognizer.swift swift/Audio.swift swift/Mic.swift swift/WavePanel.swift swift/Updates.swift
-         swift/Onboarding.swift)
+         swift/Onboarding.swift swift/SelfUpdate.swift)
 
 # универсальный бинарник: Apple Silicon + Intel в одном файле
 echo "── сборка"

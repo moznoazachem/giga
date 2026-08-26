@@ -100,8 +100,9 @@ final class App: NSObject, NSApplicationDelegate {
     let wave = WavePanel()
     var waveEnabled: Bool { UserDefaults.standard.object(forKey: "wavePanel") as? Bool ?? true }
 
-    /// Номер версии с GitHub, если она новее нашей.
+    /// Номер версии с GitHub, если она новее нашей, и её zip.
     var updateAvailable: String?
+    var updateZip: URL?
 
     /// Последняя удачная диктовка — страховка на случай «курсор был не в поле».
     var lastText: String?
@@ -111,6 +112,15 @@ final class App: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setState(.idle)
+        // после самообновления — подтвердить словами, что всё получилось
+        let prevRun = UserDefaults.standard.string(forKey: "lastRunVersion")
+        UserDefaults.standard.set(APP_VERSION, forKey: "lastRunVersion")
+        if let prevRun, prevRun != APP_VERSION {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                Toast.shared.show(L("Гига Писарь обновился до \(APP_VERSION)",
+                                    "Giga Pisar updated to \(APP_VERSION)"))
+            }
+        }
         // В 2.3 волна из-за гонки записывала СВОЁ ЖЕ появление как
         // перетаскивание и намертво прирастала к месту первого показа.
         // Сохранённое место у всех ложное — забываем его один раз.
@@ -254,8 +264,8 @@ final class App: NSObject, NSApplicationDelegate {
 
         // версия и обновления
         if let upd = updateAvailable {
-            let it = NSMenuItem(title: L("Доступна версия \(upd) — скачать", "Version \(upd) available — download"),
-                                action: #selector(openReleases), keyEquivalent: "")
+            let it = NSMenuItem(title: L("Доступна версия \(upd) — обновить", "Version \(upd) available — update"),
+                                action: #selector(startSelfUpdate), keyEquivalent: "")
             it.target = self
             menu.addItem(it)
         }
@@ -309,6 +319,26 @@ final class App: NSObject, NSApplicationDelegate {
         buildMenu()
     }
 
+    /// Само: скачает выпуск, проверит подпись, подменит себя и перезапустится.
+    @objc func startSelfUpdate() {
+        guard let zip = updateZip, let ver = updateAvailable else {
+            openReleases() // выпуск без архива — только руками
+            return
+        }
+        guard !SelfUpdate.inProgress else { return }
+        Toast.shared.show(L("Скачиваю версию \(ver)… Поставлю и перезапущусь сам.",
+                            "Downloading \(ver)… I'll install it and relaunch."), seconds: 6)
+        SelfUpdate.run(zip: zip, version: ver) { [weak self] причина in
+            let a = NSAlert()
+            a.messageText = L("Обновиться само не получилось", "Self-update didn't work")
+            a.informativeText = L("Причина: \(причина).\nМожно скачать вручную со страницы выпуска — это просто замена приложения.",
+                                  "Reason: \(причина).\nYou can download it manually from the releases page — it's just replacing the app.")
+            a.addButton(withTitle: L("Открыть страницу", "Open the page"))
+            a.addButton(withTitle: L("Позже", "Later"))
+            if a.runModal() == .alertFirstButtonReturn { self?.openReleases() }
+        }
+    }
+
     @objc func openReleases() {
         if let url = URL(string: RELEASES_PAGE) { NSWorkspace.shared.open(url) }
     }
@@ -318,9 +348,10 @@ final class App: NSObject, NSApplicationDelegate {
     /// silent — фоновая проверка: молчит, если новостей нет, и об одной и той
     /// же версии напоминает окном только один раз (дальше — пункт в меню).
     func checkUpdates(silent: Bool) {
-        fetchLatestVersion { [weak self] latest in
+        fetchLatestRelease { [weak self] latest, zip in
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.updateZip = zip
                 guard let latest else {
                     if !silent {
                         let a = NSAlert()
@@ -349,11 +380,11 @@ final class App: NSObject, NSApplicationDelegate {
                     UserDefaults.standard.set(latest, forKey: "lastUpdateNotified")
                     let a = NSAlert()
                     a.messageText = L("Вышла версия \(latest)", "Version \(latest) is out")
-                    a.informativeText = L("У тебя \(APP_VERSION). Скачать со страницы выпуска?",
-                                          "You have \(APP_VERSION). Download from the releases page?")
-                    a.addButton(withTitle: L("Скачать", "Download"))
+                    a.informativeText = L("У тебя \(APP_VERSION). Обновить? Приложение скачает выпуск, проверит подпись, поставит и перезапустится само.",
+                                          "You have \(APP_VERSION). Update? The app will download the release, verify its signature, install it and relaunch itself.")
+                    a.addButton(withTitle: L("Обновить", "Update"))
                     a.addButton(withTitle: L("Позже", "Later"))
-                    if a.runModal() == .alertFirstButtonReturn { self.openReleases() }
+                    if a.runModal() == .alertFirstButtonReturn { self.startSelfUpdate() }
                 }
             }
         }
