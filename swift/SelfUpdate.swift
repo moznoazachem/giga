@@ -101,14 +101,18 @@ enum SelfUpdate {
         return p.terminationStatus == 0
     }
 
-    /// Качает zip выпуска, проверяет и подменяет работающее приложение.
+    /// Качает zip выпуска (пробуя зеркала по очереди), проверяет
+    /// и подменяет работающее приложение.
     /// report(надпись) — что показать человеку; fail(причина) — беда;
     /// оба зовутся на главной очереди, при беде НИЧЕГО не тронуто.
-    static func run(zip: URL, version: String,
+    static func run(zips: [URL], version: String,
                     report: @escaping (String) -> Void,
                     ready: @escaping () -> Void,
                     fail: @escaping (String) -> Void) {
         guard !inProgress else { return }
+        guard !zips.isEmpty else {
+            fail(L("у выпуска нет файла", "the release has no file")); return
+        }
         inProgress = true
         func bail(_ m: String) {
             DispatchQueue.main.async { inProgress = false; downloader = nil; fail(m) }
@@ -124,17 +128,35 @@ enum SelfUpdate {
             return
         }
 
+        download(zips, at: 0, version: version, dest: dest,
+                 report: report, ready: ready, bail: bail)
+    }
+
+    /// Пробует зеркала по очереди: сорвалось с одного — тихо идём к следующему.
+    private static func download(_ zips: [URL], at i: Int, version: String, dest: String,
+                                 report: @escaping (String) -> Void,
+                                 ready: @escaping () -> Void,
+                                 bail: @escaping (String) -> Void) {
+        guard i < zips.count else {
+            bail(L("не скачалось ни с одного зеркала", "download failed on every mirror"))
+            return
+        }
         downloader = Downloader(
             onPercent: { p in report("↓ \(p)%") },
             onDone: { file, беда in
                 downloader = nil
-                guard let file else { bail(беда ?? "?"); return }
+                guard let file else {
+                    NSLog("Гига Писарь: зеркало \(zips[i].host ?? "?") — \(беда ?? "?")")
+                    download(zips, at: i + 1, version: version, dest: dest,
+                             report: report, ready: ready, bail: bail)
+                    return
+                }
                 DispatchQueue.main.async { report(L("проверяю…", "verifying…")) }
                 DispatchQueue.global(qos: .userInitiated).async {
                     install(zipFile: file, version: version, dest: dest, ready: ready, bail: bail)
                 }
             })
-        downloader?.download(zip)
+        downloader?.download(zips[i])
     }
 
     /// Распаковка, три замка, подмена. Зовётся с фоновой очереди.

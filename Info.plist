@@ -13,9 +13,9 @@
     <key>CFBundleIconFile</key>
     <string>Giga</string>
     <key>CFBundleVersion</key>
-    <string>2.7</string>
+    <string>2.8</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.7</string>
+    <string>2.8</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>

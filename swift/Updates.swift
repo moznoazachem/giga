@@ -1,31 +1,79 @@
-// Проверка обновлений.
+// Проверка обновлений — с двух площадок.
 //
-// Раз в несколько часов спрашиваем у GitHub номер последнего выпуска и
-// сравниваем со своим. Ничего не скачиваем и не ставим сами — если вышла
-// новая версия, показываем её в меню и предлагаем открыть страницу выпуска.
-// В сеть уходит один запрос без каких-либо данных о пользователе.
+// В репозитории лежит манифест update.json: номер свежей версии и ссылки
+// на скачивание. Приложение спрашивает источники ПО ОЧЕРЕДИ — сначала
+// GitFlic (доступен из России без VPN), потом GitHub. Кто ответил — тот
+// и источник: его ссылка на скачивание пробуется первой, остальные —
+// запасные. Если манифест недоступен нигде (старые выпуски без него) —
+// откат на GitHub API, как было раньше.
+// В сеть уходят только запросы номера версии, без данных о пользователе.
 
 import Foundation
 
 let RELEASES_PAGE = "https://github.com/moznoazachem/giga/releases/latest"
 private let LATEST_API = "https://api.github.com/repos/moznoazachem/giga/releases/latest"
 
-/// Спрашивает у GitHub последний выпуск: номер («2.5») и ссылку на zip
-/// с приложением — для самообновления. nil — не дозвонились.
-func fetchLatestRelease(_ done: @escaping (String?, URL?) -> Void) {
-    guard let url = URL(string: LATEST_API) else { done(nil, nil); return }
+/// Манифесты по площадкам, в порядке опроса.
+private let MANIFESTS = [
+    "https://gitflic.ru/project/moznoazachem/giga/blob/raw?file=update.json&branch=main",
+    "https://raw.githubusercontent.com/moznoazachem/giga/main/update.json",
+]
+
+/// Свежий выпуск: номер версии и ссылки на zip в порядке предпочтения.
+struct UpdateInfo {
+    let version: String
+    let downloads: [URL]
+}
+
+/// Спрашивает площадки по очереди; nil — не дозвонились ни до одной.
+func fetchLatestRelease(_ done: @escaping (UpdateInfo?) -> Void) {
+    tryManifest(0, done)
+}
+
+private func tryManifest(_ i: Int, _ done: @escaping (UpdateInfo?) -> Void) {
+    guard i < MANIFESTS.count else {
+        fetchFromGithubAPI(done) // манифестов нет — старый путь
+        return
+    }
+    guard let url = URL(string: MANIFESTS[i]) else { tryManifest(i + 1, done); return }
+    var req = URLRequest(url: url)
+    req.timeoutInterval = 8
+    URLSession.shared.dataTask(with: req) { data, resp, _ in
+        guard let data,
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let version = json["version"] as? String,
+              let list = json["downloads"] as? [String]
+        else {
+            tryManifest(i + 1, done)
+            return
+        }
+        var urls = list.compactMap { URL(string: $0) }
+        // ответившая площадка надёжнее для этого пользователя —
+        // её ссылку ставим первой
+        if let host = url.host {
+            urls.sort { a, _ in a.host == host }
+        }
+        done(UpdateInfo(version: version, downloads: urls))
+    }.resume()
+}
+
+/// Запасной путь для переходного периода: GitHub API, как в 2.5–2.7.
+private func fetchFromGithubAPI(_ done: @escaping (UpdateInfo?) -> Void) {
+    guard let url = URL(string: LATEST_API) else { done(nil); return }
     var req = URLRequest(url: url)
     req.timeoutInterval = 10
     URLSession.shared.dataTask(with: req) { data, _, _ in
         guard let data,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tag = json["tag_name"] as? String
-        else { done(nil, nil); return }
+        else { done(nil); return }
         let zip = (json["assets"] as? [[String: Any]])?
             .first { ($0["name"] as? String)?.hasSuffix(".zip") == true }
             .flatMap { $0["browser_download_url"] as? String }
             .flatMap { URL(string: $0) }
-        done(tag.hasPrefix("v") ? String(tag.dropFirst()) : tag, zip)
+        let v = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        done(UpdateInfo(version: v, downloads: zip.map { [$0] } ?? []))
     }.resume()
 }
 

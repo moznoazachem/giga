@@ -100,9 +100,9 @@ final class App: NSObject, NSApplicationDelegate {
     let wave = WavePanel()
     var waveEnabled: Bool { UserDefaults.standard.object(forKey: "wavePanel") as? Bool ?? true }
 
-    /// Номер версии с GitHub, если она новее нашей, и её zip.
+    /// Номер свежей версии с зеркал, если она новее нашей, и её ссылки.
     var updateAvailable: String?
-    var updateZip: URL?
+    var updateDownloads: [URL] = []
 
     /// Последняя удачная диктовка — страховка на случай «курсор был не в поле».
     var lastText: String?
@@ -324,14 +324,14 @@ final class App: NSObject, NSApplicationDelegate {
 
     /// Само: скачает выпуск, проверит подпись, подменит себя и перезапустится.
     @objc func startSelfUpdate() {
-        guard let zip = updateZip, let ver = updateAvailable else {
+        guard !updateDownloads.isEmpty, let ver = updateAvailable else {
             openReleases() // выпуск без архива — только руками
             return
         }
         guard !SelfUpdate.inProgress else { return }
         Toast.shared.show(L("Скачиваю версию \(ver)… Ход дела — в строке меню. Диктовка пока работает как обычно.",
                             "Downloading \(ver)… Progress is in the menu bar. Dictation keeps working meanwhile."), seconds: 6)
-        SelfUpdate.run(zip: zip, version: ver, report: { [weak self] s in
+        SelfUpdate.run(zips: updateDownloads, version: ver, report: { [weak self] s in
             // ход дела рядом с иконкой: «↓ 43%», потом «проверяю…»
             self?.statusItem.button?.imagePosition = .imageLeft
             self?.statusItem.button?.title = " " + s
@@ -370,10 +370,11 @@ final class App: NSObject, NSApplicationDelegate {
     /// silent — фоновая проверка: молчит, если новостей нет, и об одной и той
     /// же версии напоминает окном только один раз (дальше — пункт в меню).
     func checkUpdates(silent: Bool) {
-        fetchLatestRelease { [weak self] latest, zip in
+        fetchLatestRelease { [weak self] info in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.updateZip = zip
+                self.updateDownloads = info?.downloads ?? []
+                let latest = info?.version
                 guard let latest else {
                     if !silent {
                         let a = NSAlert()
