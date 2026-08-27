@@ -112,6 +112,7 @@ final class App: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setState(.idle)
+        offerMoveToApplications()
         // после самообновления — подтвердить словами, что всё получилось
         let prevRun = UserDefaults.standard.string(forKey: "lastRunVersion")
         UserDefaults.standard.set(APP_VERSION, forKey: "lastRunVersion")
@@ -452,6 +453,60 @@ final class App: NSObject, NSApplicationDelegate {
         a.informativeText = L("Ожидались в ~/.giga/model. Поставь их скриптом install.sh из репозитория.",
                               "Expected in ~/.giga/model. Install them with install.sh from the repository.")
         a.runModal()
+    }
+
+    // MARK: запуск не из «Программ»
+    //
+    // Приложение, открытое прямо из «Загрузок» или архива, macOS подменяет
+    // временной карантинной копией (App Translocation): путь каждый раз
+    // другой, и разрешения прилипают не к той копии. Человек видит
+    // «тумблер включён, а всё равно ругается». Лечение одно — жить
+    // в «Программах», поэтому предлагаем переехать сразу, до онбординга.
+
+    func offerMoveToApplications() {
+        let path = Bundle.main.bundlePath
+        let dest = "/Applications/Giga Pisar.app"
+        guard path != dest else { return }
+
+        let translocated = path.contains("/AppTranslocation/")
+        let a = NSAlert()
+        a.messageText = L("Перенести Гига Писарь в «Программы»?", "Move Giga Pisar to Applications?")
+        a.informativeText = L(
+            translocated
+                ? "Приложение открыто из временной карантинной копии — так бывает при запуске прямо из «Загрузок». Разрешения macOS прилипают к месту на диске, поэтому будут слетать при каждом запуске. Я перенесу себя в «Программы» и перезапущусь оттуда."
+                : "Приложение запущено из «\(path)». Чтобы разрешения не слетали, ему лучше жить в «Программах». Я перенесу себя туда и перезапущусь.",
+            translocated
+                ? "The app is running from a temporary quarantine copy — that happens when it's launched straight from Downloads. macOS ties permissions to the location on disk, so they'd break on every launch. I'll move myself to Applications and relaunch from there."
+                : "The app is running from “\(path)”. To keep permissions stable it should live in Applications. I'll move myself there and relaunch.")
+        a.addButton(withTitle: L("Перенести и перезапустить", "Move and relaunch"))
+        a.addButton(withTitle: L("Позже", "Later"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+
+        let fm = FileManager.default
+        try? fm.removeItem(atPath: dest)
+        do {
+            try fm.copyItem(atPath: path, toPath: dest)
+        } catch {
+            let b = NSAlert()
+            b.messageText = L("Не получилось перенести", "Couldn't move the app")
+            b.informativeText = L("Перетащи Giga Pisar.app в папку «Программы» Финдером и запусти оттуда. (\(error.localizedDescription))",
+                                  "Drag Giga Pisar.app into the Applications folder in Finder and launch it from there. (\(error.localizedDescription))")
+            b.runModal()
+            return
+        }
+        // снять карантин с новой копии, чтобы система не подменяла её снова
+        let x = Process()
+        x.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        x.arguments = ["-dr", "com.apple.quarantine", dest]
+        try? x.run()
+        x.waitUntilExit()
+        // запустить копию из «Программ» после нашего выхода
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c",
+            "while /bin/kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do /bin/sleep 0.3; done; /usr/bin/open \"\(dest)\""]
+        try? p.run()
+        NSApp.terminate(nil)
     }
 
     // MARK: перехват правого ⌘ — без разрешения «Мониторинг ввода»
