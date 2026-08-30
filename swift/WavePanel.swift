@@ -10,7 +10,10 @@
 import AppKit
 
 /// Где сейчас набирается текст. По убыванию точности:
-/// каретка активного поля → низ самого поля → указатель мыши.
+/// каретка активного поля → низ самого поля → низ активного окна →
+/// указатель мыши. На виртуальных машинах Accessibility часто молчит
+/// и про каретку, и про поле — раньше плашка сваливалась к мыши,
+/// которая лежит где попало, и «появлялась в разных концах экрана».
 func typingAnchor() -> NSPoint {
     if let p = typingAnchorIfKnown(log: true) { return p }
     NSLog("Гига якорь: мышь \(NSEvent.mouseLocation)")
@@ -20,13 +23,23 @@ func typingAnchor() -> NSPoint {
 /// Якорь без запасного варианта «мышь» — для слежения во время записи:
 /// за окном с кареткой плашка ходить должна, а за мышью — нет.
 func typingAnchorIfKnown(log: Bool = false) -> NSPoint? {
+    let field = focusedFieldFrame()
     if let p = caretPoint() {
-        if log { NSLog("Гига якорь: каретка \(p)") }
-        return p
+        // Каретка обязана лежать в своём поле. Точка вне поля — враньё
+        // (виртуалки и терминалы любят так отвечать), не верим ей.
+        if field == nil || field!.insetBy(dx: -40, dy: -40).contains(p) {
+            if log { NSLog("Гига якорь: каретка \(p)") }
+            return p
+        }
+        if log { NSLog("Гига якорь: каретка \(p) вне поля \(field!) — мусор") }
     }
-    if let f = focusedFieldFrame() {
+    if let f = field {
         if log { NSLog("Гига якорь: поле \(f)") }
         return NSPoint(x: f.midX, y: f.minY + 30)
+    }
+    if let w = focusedWindowFrame() {
+        if log { NSLog("Гига якорь: окно \(w)") }
+        return NSPoint(x: w.midX, y: w.minY + 60)
     }
     return nil
 }
@@ -117,6 +130,38 @@ func caretPoint() -> NSPoint? {
         return NSPoint(x: r.minX, y: r.minY)
     }
     return nil
+}
+
+/// Рамка активного окна — предпоследний якорь. Окно система знает
+/// всегда, даже когда про каретку и поле отмалчивается (виртуалки).
+func focusedWindowFrame() -> NSRect? {
+    var appRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(AXUIElementCreateSystemWide(),
+                                        "AXFocusedApplication" as CFString,
+                                        &appRef) == .success,
+          let a = appRef, CFGetTypeID(a) == AXUIElementGetTypeID()
+    else { return nil }
+    var winRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(a as! AXUIElement,
+                                        "AXFocusedWindow" as CFString,
+                                        &winRef) == .success,
+          let w = winRef, CFGetTypeID(w) == AXUIElementGetTypeID()
+    else { return nil }
+    let win = w as! AXUIElement
+    var posRef: CFTypeRef?, sizeRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(win, "AXPosition" as CFString, &posRef) == .success,
+          AXUIElementCopyAttributeValue(win, "AXSize" as CFString, &sizeRef) == .success,
+          let pv = posRef, CFGetTypeID(pv) == AXValueGetTypeID(),
+          let sv = sizeRef, CFGetTypeID(sv) == AXValueGetTypeID()
+    else { return nil }
+    var pos = CGPoint.zero; var size = CGSize.zero
+    guard AXValueGetValue(pv as! AXValue, .cgPoint, &pos),
+          AXValueGetValue(sv as! AXValue, .cgSize, &size),
+          size.height > 0
+    else { return nil }
+    let out = axFlip(CGRect(origin: pos, size: size))
+    guard axOnScreen(out) else { return nil }
+    return out
 }
 
 /// Рамка фокусного поля — запасной якорь, когда каретку скрывают.
