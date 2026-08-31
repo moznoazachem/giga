@@ -291,7 +291,10 @@ final class Chips {
             return pickByNumber(1)
         case 20, 85: // «3»
             return pickByNumber(2)
-        case 51, 55, 56, 58, 59, 61, 62, 63: // Backspace и модификаторы не гасят
+        case 55, 56, 58, 59, 61, 62, 63: // модификаторы меню не гасят
+            return Unmanaged.passUnretained(event)
+        case 51, 117: // Backspace и Delete: стирает текст — подсказка не нужна
+            DispatchQueue.main.async { [weak self] in self?.hide() }
             return Unmanaged.passUnretained(event)
         default: // начал печатать — меню уходит, клавиша идёт в текст
             DispatchQueue.main.async { [weak self] in self?.hide() }
