@@ -24,7 +24,11 @@ no companion server.
   `Features.swift` (audio → features), `Ort.swift` (model inference),
   `Recognizer.swift` (RNN-T decoding), `Tokenizer.swift` (text assembly),
   `Audio.swift` (wav reading, splitting on pauses)
-- `vendor/` — the onnxruntime library, downloaded by the build script (not in the repo)
+- `swift/Brain.swift` — the optional brain: a local LLM (bundled llama.cpp)
+  polishes dictated text on voice commands like "Писарь, исправь"
+- `swift/Chips.swift` — the pop-up menu at the cursor: compose / shorten /
+  translate, replaces text in place, with "put it back"
+- `vendor/` — onnxruntime and the llama.cpp engine, downloaded by the build script (not in the repo)
 - `install.sh` — puts the model files into `~/.giga/model`
 
 The core is a Swift port of `giga_core.py` from
@@ -33,7 +37,7 @@ Both are run on the same recordings by `scripts/сверка-swift.py` and must
 produce identical text.
 
 Menu labels follow the system language: Russian system — Russian labels,
-anything else — English.
+anything else — English. Overridable in the menu: Auto / Русский / English.
 
 ### Performance
 
@@ -45,9 +49,10 @@ Measured on Apple Silicon:
 | 30-second recording (split on pauses) | 0.47 s |
 | model load at startup | 0.22 s |
 
-The app weighs 72 MB, 71 of which is the onnxruntime library (universal,
-Apple Silicon and Intel in one file). The model adds 309 MB.
-About 450 MB resident in memory.
+The app weighs 97 MB: 71 is the onnxruntime library (universal, Apple
+Silicon and Intel in one file), another 25 is the bundled llama.cpp engine
+for the optional brain. The recognition model adds 309 MB. About 450 MB
+resident in memory — plus the LLM, but only while it is actually loaded.
 
 ### Install
 
@@ -105,19 +110,44 @@ tccutil reset Accessibility ru.panda.giga
 
 - **Hold right ⌘** (configurable in the menu) → speak → release → text is inserted
 - Menu bar icon: waveform — ready; red dancing — recording; dots — transcribing
-- Click the icon for: mouse-driven recording, key selection, launch at login
+- Click the icon for: key selection, menu language, launch at login, the brain
 - **Wave near cursor** — a small floating pill with an equalizer animation
-  appears next to the text caret while you dictate (falls back to the mouse
-  pointer when the app won't reveal its caret). Drag it anywhere — it remembers
-  the spot; pick its color in the menu, or toggle it off entirely
+  appears next to the text caret while you dictate (falls back to the active
+  window, then to the mouse pointer, when the app won't reveal its caret).
+  Drag it anywhere — it remembers the spot; or toggle it off entirely
 - Long dictations are split on pauses between phrases and stitched back together
+- The last dictation always stays on the clipboard — paste it again anywhere with ⌘V
+
+### The brain (optional)
+
+Dictation is instant and raw by default. Pick a local LLM in the menu
+("Pisar's brain") and it will polish dictated text on demand — strictly
+on-device, like everything else:
+
+- **By voice**: end the dictation with a plain-language command —
+  *"Писарь, исправь"* (clean it up), *"Писарь, переведи на английский"*,
+  *"Гига Писарь, собери в чёткую мысль"* — and the processed text is inserted
+  instead of the raw one
+- **By menu**: after a raw paste a small menu pops up at the cursor
+  (1 compose the thought · 2 shorten · 3 translate) — pick with a digit,
+  arrows or the mouse; the text is replaced right in the field, with
+  "put it back" one keypress away. In terminals the menu wears a terminal
+  skin and replaces text via backspaces (no ⌘Z there)
+- Models download right from the menu: **GigaChat 3.1 Lightning** by Sber
+  (6.5 GB, native Russian, Macs with 16 GB RAM) or **Qwen3 4B** (2.5 GB, light)
+- The engine is a bundled llama.cpp, Apple Silicon only. The model loads on
+  the first command (~10 s, with a status pill at the cursor: "Starting the
+  brain…") and unloads after 15 idle minutes — it never hogs RAM for nothing
+- If the brain stalls or fails, the raw text is inserted anyway — dictation
+  never breaks because of it
 
 ### Updates
 
-The menu shows the current version and a "Check for updates…" item. The app also
-asks GitHub every few hours whether a newer release exists — only the version
-number travels over the network, nothing else. Updates are never installed
-automatically: you get a notice and a link to the releases page.
+The menu shows the current version and a "Check for updates…" item. The app
+asks GitHub/GitFlic every few hours whether a newer release exists — only the
+version number travels over the network. When one is out, click "Update":
+the app downloads it (percent in the menu bar), verifies the signature,
+replaces itself and relaunches. Nothing is ever installed without the click.
 
 ### Limitations
 
@@ -159,7 +189,11 @@ MIT
   `Features.swift` (звук → признаки), `Ort.swift` (запуск модели),
   `Recognizer.swift` (декодирование RNN-T), `Tokenizer.swift` (сборка текста),
   `Audio.swift` (чтение wav, нарезка по паузам)
-- `vendor/` — библиотека onnxruntime, качается сборкой сама (в репозиторий не входит)
+- `swift/Brain.swift` — мозг по желанию: локальная нейронка (вложенный
+  llama.cpp) причёсывает надиктованное по командам вроде «Писарь, исправь»
+- `swift/Chips.swift` — менюшка у курсора: собрать мысль / сократить /
+  перевести, подмена текста на месте и «вернуть как было»
+- `vendor/` — onnxruntime и движок llama.cpp, качаются сборкой сами (в репозиторий не входят)
 - `install.sh` — кладёт файлы модели в `~/.giga/model`
 
 Ядро — перенос на Swift питоновского `giga_core.py` из
@@ -168,7 +202,7 @@ MIT
 выдавать один и тот же текст.
 
 Надписи в меню подстраиваются под язык системы: русская система — русские,
-любая другая — английские.
+любая другая — английские. В меню можно и принудительно: Авто / Русский / English.
 
 ### Сколько работает
 
@@ -180,9 +214,10 @@ MIT
 | запись 30 секунд (режется по паузам) | 0,47 с |
 | загрузка модели при запуске | 0,22 с |
 
-Приложение весит 72 МБ, из них 71 — библиотека onnxruntime (универсальная,
-Apple Silicon и Intel в одном файле). Модель — ещё 309 МБ.
-В памяти держит около 450 МБ.
+Приложение весит 97 МБ: 71 — библиотека onnxruntime (универсальная, Apple
+Silicon и Intel в одном файле), ещё 25 — вложенный движок llama.cpp для
+мозга. Модель распознавания — ещё 309 МБ. В памяти держит около 450 МБ,
+плюс нейронка мозга — но только пока она реально загружена.
 
 ### Установка
 
@@ -240,19 +275,46 @@ tccutil reset Accessibility ru.panda.giga
 
 - **Зажми правый ⌘** (клавиша меняется в меню) → говори → отпусти → текст вставится
 - Иконка в строке меню: волна — готова; красная пляшет — запись; точки — распознаёт
-- Меню по клику: запись мышкой, выбор клавиши, автозапуск при входе
+- Меню по клику: выбор клавиши, язык меню, автозапуск при входе, мозг
 - **Волна у курсора** — во время диктовки рядом с текстовой кареткой появляется
   плашка с анимацией-эквалайзером (если приложение не отдаёт каретку — плашка
-  встаёт у указателя мыши). Её можно перетащить — место запомнится; цвет
-  выбирается в меню, а можно выключить совсем
+  встаёт у низа активного окна, а на крайний случай у мыши). Её можно
+  перетащить — место запомнится; а можно выключить совсем
 - Длинные диктовки режутся по паузам между фразами и склеиваются
+- Последняя диктовка всегда остаётся в буфере обмена — вставляй её ещё раз
+  где угодно через ⌘V
+
+### Мозг Писаря (по желанию)
+
+По умолчанию диктовка мгновенная и сырая. Но можно выбрать в меню локальную
+нейронку («Мозг Писаря») — и она будет причёсывать надиктованное по твоей
+команде. Полностью локально, как и всё остальное:
+
+- **Голосом**: закончи диктовку командой обычными словами —
+  *«Писарь, исправь»*, *«Писарь, переведи на английский»*,
+  *«Гига Писарь, собери в чёткую мысль»* — и вставится уже обработанный
+  текст вместо сырого
+- **Менюшкой**: после вставки у курсора всплывает меню
+  (1 собрать мысль · 2 сократить · 3 перевести) — выбирай цифрой, стрелками
+  или мышью; текст подменяется прямо в поле, рядом «вернуть как было».
+  В терминалах меню одевается в терминальный костюм, а подмена идёт
+  через Backspace (⌘Z там не живёт)
+- Модели качаются прямо из меню: **GigaChat 3.1 Lightning** от Сбера
+  (6,5 ГБ, родной русский, маки от 16 ГБ памяти) или **Qwen3 4B**
+  (2,5 ГБ, лёгкая)
+- Движок — вложенный llama.cpp, только Apple Silicon. Нейронка грузится
+  при первой команде (~10 с, у курсора статус «Запускаю нейронку…»)
+  и выгружается после 15 минут простоя — зря память не ест
+- Если мозг завис или упал — вставится сырой текст: диктовка не имеет
+  права сломаться из-за него
 
 ### Обновления
 
 В меню видна текущая версия и пункт «Проверить обновления…». Раз в несколько
-часов приложение само спрашивает GitHub, не вышла ли новая версия — по сети
-уходит только номер версии, больше ничего. Само оно ничего не устанавливает:
-покажет уведомление и ссылку на страницу выпуска.
+часов приложение спрашивает GitHub/GitFlic, не вышла ли новая версия — по
+сети уходит только номер версии. Вышла — жми «Обновить»: скачает (проценты
+в строке меню), проверит подпись, подменит себя и перезапустится. Без клика
+само ничего не ставит.
 
 ### Ограничения
 
