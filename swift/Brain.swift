@@ -9,7 +9,8 @@
 // Нейронка — просто файл на диске (~/Library/Application Support/Giga Pisar/
 // models), крутится локально через приложенный llama-server (движок llama.cpp,
 // Contents/Frameworks/llama). Ничего в интернет не уходит — как и распознавание.
-// Сервер поднимается при выборе модели и живёт рядом; думает 1–4 секунды.
+// Сервер поднимается при первой команде (она из-за этого дольше, ~10 с),
+// думает 1–4 секунды, а после 15 минут простоя выгружается — память дороже.
 //
 // Если нейронка не ответила за разумное время или упала — вставляем сырой
 // текст: диктовка не имеет права сломаться из-за мозга.
@@ -136,7 +137,6 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
                 self.downloadingId = nil
                 self.dlTask = nil; self.dlSession = nil
                 self.chosenId = id       // скачал — сразу и выбрал
-                self.ensureServer()
                 self.onChange?()
                 Toast.shared.show(L("\(m.name) скачан — Писарь слушает команды",
                                     "\(m.name) is ready — Pisar takes commands now"))
@@ -178,6 +178,20 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
 
     private var server: Process?
     private var serverModelId: String?
+    private var idleTimer: Timer?
+
+    /// Нейронка ест 3–6 ГБ памяти, пока сидит в сервере. Без дела не держим:
+    /// поднимается при первой команде, через 15 минут простоя выгружается.
+    private func scheduleIdleStop() {
+        DispatchQueue.main.async { [weak self] in
+            self?.idleTimer?.invalidate()
+            self?.idleTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60,
+                                                   repeats: false) { [weak self] _ in
+                NSLog("Гига мозг: 15 минут без работы — отпускаю память")
+                self?.stopServer()
+            }
+        }
+    }
 
     private var serverBinary: String {
         Bundle.main.bundlePath + "/Contents/Frameworks/llama/llama-server"
@@ -261,12 +275,36 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
     /// Прогнать текст через нейронку. done зовётся на любом исходе:
     /// с готовым текстом — или с nil, если мозг не справился (тогда
     /// вызывающий вставляет сырой текст, диктовка не ломается).
+    /// Что показать на плашке-статусе, пока нейронка думает.
+    static func actionLabel(_ command: String) -> String {
+        let c = command.lowercased()
+        if c.contains("перевед") || c.contains("англ") { return L("Перевожу…", "Translating…") }
+        if c.contains("сократ") || c.contains("короче") { return L("Сокращаю…", "Shortening…") }
+        if c.contains("мысль") { return L("Собираю мысль…", "Composing…") }
+        return L("Причёсываю…", "Polishing…")
+    }
+
     func transform(_ body: String, command: String, done: @escaping (String?) -> Void) {
+        // холодный старт — нейронку ещё надо поднять с диска (~10 секунд),
+        // человек должен видеть, что происходит, а не гадать
+        let cold = server?.isRunning != true || serverModelId != chosenId
         ensureServer()
+        scheduleIdleStop()
+        let action = Self.actionLabel(command)
+        DispatchQueue.main.async {
+            Toast.shared.showSticky(cold ? L("Запускаю нейронку…", "Starting the brain…") : action)
+        }
+        let finish: (String?) -> Void = { out in
+            DispatchQueue.main.async { Toast.shared.hide() }
+            done(out)
+        }
         let deadline = Date().addingTimeInterval(40)
         waitHealthy(until: deadline) { [weak self] ok in
-            guard ok else { done(nil); return }
-            self?.chat(body: body, command: command, done: done)
+            guard ok else { finish(nil); return }
+            if cold {
+                DispatchQueue.main.async { Toast.shared.showSticky(action) }
+            }
+            self?.chat(body: body, command: command, done: finish)
         }
     }
 

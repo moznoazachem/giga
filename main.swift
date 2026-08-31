@@ -142,7 +142,6 @@ final class App: NSObject, NSApplicationDelegate {
             WavePanel.pinned = nil
         }
         Brain.shared.onChange = { [weak self] in self?.buildMenu() }
-        Brain.shared.ensureServer()
         buildMenu()
         loadModel()
         startKeyMonitors()
@@ -206,19 +205,52 @@ final class App: NSObject, NSApplicationDelegate {
         it.target = self
         if let icon, let img = NSImage(systemSymbolName: icon, accessibilityDescription: nil) {
             img.isTemplate = true
+            img.size = NSSize(width: 13, height: 13)
             it.image = img
         }
+        // все пункты через attributedTitle: так шрифт мельче системного
+        let t = NSMutableAttributedString(
+            string: title,
+            attributes: [.font: NSFont.menuFont(ofSize: 12),
+                         .foregroundColor: NSColor.labelColor])
         if let sub {
-            let t = NSMutableAttributedString(
-                string: title + "\n",
-                attributes: [.font: NSFont.menuFont(ofSize: 13),
-                             .foregroundColor: NSColor.labelColor])
             t.append(NSAttributedString(
-                string: sub,
-                attributes: [.font: NSFont.menuFont(ofSize: 11),
+                string: "\n" + sub,
+                attributes: [.font: NSFont.menuFont(ofSize: 10),
                              .foregroundColor: NSColor.secondaryLabelColor]))
-            it.attributedTitle = t
         }
+        it.attributedTitle = t
+        return it
+    }
+
+    /// Заголовок раздела — своя отрисовка: обычный отключённый пункт мак
+    /// рисует полупрозрачным, как «сломанную опцию», а свой вью не трогает.
+    func mkHeader(_ title: String, sub: String? = nil) -> NSMenuItem {
+        let it = NSMenuItem()
+        it.isEnabled = false
+        let w: CGFloat = 250
+        let t = NSTextField(labelWithString: title)
+        t.font = .boldSystemFont(ofSize: 12)
+        t.textColor = .labelColor
+        t.sizeToFit()
+        let v = NSView()
+        var h: CGFloat
+        if let sub {
+            let sv = NSTextField(labelWithString: sub)
+            sv.font = .menuFont(ofSize: 10)
+            sv.textColor = .secondaryLabelColor
+            sv.sizeToFit()
+            sv.setFrameOrigin(NSPoint(x: 14, y: 3))
+            v.addSubview(sv)
+            t.setFrameOrigin(NSPoint(x: 14, y: 4 + sv.frame.height))
+            h = t.frame.height + sv.frame.height + 9
+        } else {
+            t.setFrameOrigin(NSPoint(x: 14, y: 4))
+            h = t.frame.height + 8
+        }
+        v.frame = NSRect(x: 0, y: 0, width: w, height: h)
+        v.addSubview(t)
+        it.view = v
         return it
     }
 
@@ -228,23 +260,16 @@ final class App: NSObject, NSApplicationDelegate {
         // даже если у них есть подменю
         menu.autoenablesItems = false
 
-        let header = mkItem(L("Гига Писарь", "Giga Pisar"),
-                            sub: L("зажми \(currentHotkey().title) и говори",
-                                   "hold \(currentHotkey().title) and speak"))
-        header.isEnabled = false
-        menu.addItem(header)
-        menu.addItem(NSMenuItem.separator())
-
-        menu.addItem(mkItem(L("Начать/остановить запись", "Start / stop recording"),
-                            icon: "mic", action: #selector(menuToggle)))
+        menu.addItem(mkHeader(L("Гига Писарь", "Giga Pisar"),
+                              sub: L("зажми \(currentHotkey().title) и говори",
+                                     "hold \(currentHotkey().title) and speak")))
         menu.addItem(NSMenuItem.separator())
 
         // выбор клавиши диктовки
         let keyItem = mkItem(L("Клавиша диктовки", "Dictation key"), icon: "keyboard")
         let keyMenu = NSMenu()
         for hk in HOTKEYS {
-            let item = NSMenuItem(title: hk.title, action: #selector(pickHotkey(_:)), keyEquivalent: "")
-            item.target = self
+            let item = mkItem(hk.title, action: #selector(pickHotkey(_:)))
             item.representedObject = hk.id
             item.state = (hk.id == currentHotkey().id) ? .on : .off
             keyMenu.addItem(item)
@@ -270,8 +295,7 @@ final class App: NSObject, NSApplicationDelegate {
         let curLang = UserDefaults.standard.string(forKey: "uiLang") ?? "auto"
         for (code, name) in [("auto", L("Авто (как система)", "Auto (match system)")),
                              ("ru", "Русский"), ("en", "English")] {
-            let it = NSMenuItem(title: name, action: #selector(pickLang(_:)), keyEquivalent: "")
-            it.target = self
+            let it = mkItem(name, action: #selector(pickLang(_:)))
             it.representedObject = code
             it.state = curLang == code ? .on : .off
             langMenu.addItem(it)
@@ -281,11 +305,8 @@ final class App: NSObject, NSApplicationDelegate {
 
         // Мозг: локальная нейронка правит текст по команде «Писарь, …»
         menu.addItem(NSMenuItem.separator())
-        let brainHead = mkItem(L("Мозг Писаря", "Pisar's brain"),
-                               sub: L("причёсывает надиктованный текст", "polishes dictated text"),
-                               icon: "brain")
-        brainHead.isEnabled = false
-        menu.addItem(brainHead)
+        menu.addItem(mkHeader(L("Мозг Писаря", "Pisar's brain"),
+                              sub: L("причёсывает надиктованный текст", "polishes dictated text")))
         if Brain.shared.engineAvailable {
             let off = mkItem(L("Выключен", "Off"), action: #selector(pickBrain(_:)))
             off.representedObject = "off"
@@ -350,13 +371,12 @@ final class App: NSObject, NSApplicationDelegate {
                             action: #selector(checkUpdatesManual)))
 
         menu.addItem(NSMenuItem.separator())
-        let quit = NSMenuItem(title: L("Выйти", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = mkItem(L("Выйти", "Quit"))
+        quit.action = #selector(NSApplication.terminate(_:))
+        quit.target = nil
+        quit.keyEquivalent = "q"
         menu.addItem(quit)
         statusItem.menu = menu
-    }
-
-    @objc func menuToggle() {
-        if mic.isRecording { stopRecording(abort: false) } else { startRecording() }
     }
 
     @objc func pickHotkey(_ sender: NSMenuItem) {
@@ -610,7 +630,6 @@ final class App: NSObject, NSApplicationDelegate {
             return
         }
         Brain.shared.chosenId = id
-        Brain.shared.ensureServer()
         buildMenu()
     }
 
@@ -741,6 +760,12 @@ final class App: NSObject, NSApplicationDelegate {
                     self.flashError()
                     return
                 }
+                // Сразу в буфер: что бы дальше ни случилось (мозг завис,
+                // вставка не прошла, приложение перезапустили) — наговоренное
+                // уже не потеряется, его можно вставить самому через ⌘V.
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(текст, forType: .string)
                 // Обращение «Писарь, …» в конце? Сперва текст идёт в мозг.
                 if let (body, cmd) = Brain.parseCommand(текст) {
                     guard Brain.shared.ready, Brain.shared.engineAvailable else {

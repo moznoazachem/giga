@@ -286,6 +286,16 @@ final class Toast {
         panel.contentView = box
     }
 
+    private var generation = 0
+
+    /// Липкая плашка-статус: висит, пока не позовут hide().
+    func showSticky(_ text: String) { show(text, seconds: 0) }
+
+    func hide() {
+        generation += 1
+        panel.orderOut(nil)
+    }
+
     func show(_ text: String, seconds: Double = 3.5) {
         label.stringValue = text
         label.sizeToFit()
@@ -293,7 +303,8 @@ final class Toast {
         let size = NSSize(width: label.frame.width + pad * 2,
                           height: label.frame.height + pad)
         label.setFrameOrigin(NSPoint(x: pad, y: pad / 2))
-        let p = NSEvent.mouseLocation
+        // у места набора, а не у мыши: смотрят туда, где появится текст
+        let p = typingAnchorIfKnown() ?? NSEvent.mouseLocation
         var origin = NSPoint(x: p.x + 14, y: p.y - size.height - 12)
         let screen = NSScreen.screens.first { $0.frame.contains(p) } ?? NSScreen.main
         if let f = screen?.visibleFrame {
@@ -302,8 +313,13 @@ final class Toast {
         }
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
         panel.orderFrontRegardless()
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            self?.panel.orderOut(nil)
+        generation += 1
+        let g = generation
+        if seconds > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                guard let self, self.generation == g else { return }
+                self.panel.orderOut(nil)
+            }
         }
     }
 }
