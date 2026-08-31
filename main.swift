@@ -9,7 +9,15 @@ import ServiceManagement
 
 // Язык интерфейса берём у системы: русская система — русские надписи,
 // любая другая — английские. Имя приложения (Giga Pisar) не переводится.
-let uiIsRussian: Bool = (Locale.preferredLanguages.first ?? "en").hasPrefix("ru")
+/// Язык интерфейса: «auto» — как у системы, «ru» / «en» — принудительно.
+/// Многие держат мак на английском, а диктуют по-русски — им рычаг.
+var uiIsRussian: Bool {
+    switch UserDefaults.standard.string(forKey: "uiLang") ?? "auto" {
+    case "ru": return true
+    case "en": return false
+    default: return (Locale.preferredLanguages.first ?? "en").hasPrefix("ru")
+    }
+}
 
 /// Выбирает надпись по языку системы: L(<по-русски>, <по-английски>).
 func L(_ ru: String, _ en: String) -> String { uiIsRussian ? ru : en }
@@ -109,6 +117,10 @@ final class App: NSObject, NSApplicationDelegate {
 
 
 
+    func applicationWillTerminate(_ n: Notification) {
+        Brain.shared.stopServer()
+    }
+
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setState(.idle)
@@ -129,6 +141,8 @@ final class App: NSObject, NSApplicationDelegate {
             UserDefaults.standard.set(true, forKey: "wavePinBugFixed2")
             WavePanel.pinned = nil
         }
+        Brain.shared.onChange = { [weak self] in self?.buildMenu() }
+        Brain.shared.ensureServer()
         buildMenu()
         loadModel()
         startKeyMonitors()
@@ -184,25 +198,49 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Компактный пункт меню: иконка, короткое название и, если надо,
+    /// пояснение мелким серым текстом второй строкой.
+    func mkItem(_ title: String, sub: String? = nil, icon: String? = nil,
+                action: Selector? = nil) -> NSMenuItem {
+        let it = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        it.target = self
+        if let icon, let img = NSImage(systemSymbolName: icon, accessibilityDescription: nil) {
+            img.isTemplate = true
+            it.image = img
+        }
+        if let sub {
+            let t = NSMutableAttributedString(
+                string: title + "\n",
+                attributes: [.font: NSFont.menuFont(ofSize: 13),
+                             .foregroundColor: NSColor.labelColor])
+            t.append(NSAttributedString(
+                string: sub,
+                attributes: [.font: NSFont.menuFont(ofSize: 11),
+                             .foregroundColor: NSColor.secondaryLabelColor]))
+            it.attributedTitle = t
+        }
+        return it
+    }
+
     func buildMenu() {
         let menu = NSMenu()
         // включённостью пунктов управляем сами: серые должны быть серыми,
         // даже если у них есть подменю
         menu.autoenablesItems = false
 
-        let header = NSMenuItem(title: L("Гига Писарь — диктовка (зажми \(currentHotkey().title))",
-                                     "Giga Pisar — dictation (hold \(currentHotkey().title))"), action: nil, keyEquivalent: "")
+        let header = mkItem(L("Гига Писарь", "Giga Pisar"),
+                            sub: L("зажми \(currentHotkey().title) и говори",
+                                   "hold \(currentHotkey().title) and speak"))
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(NSMenuItem.separator())
 
-        let toggle = NSMenuItem(title: L("Начать/остановить запись", "Start / stop recording"), action: #selector(menuToggle), keyEquivalent: "")
-        toggle.target = self
-        menu.addItem(toggle)
+        menu.addItem(mkItem(L("Начать/остановить запись", "Start / stop recording"),
+                            icon: "mic", action: #selector(menuToggle)))
         menu.addItem(NSMenuItem.separator())
 
         // выбор клавиши диктовки
-        let keyItem = NSMenuItem(title: L("Клавиша диктовки", "Dictation key"), action: nil, keyEquivalent: "")
+        let keyItem = mkItem(L("Клавиша диктовки", "Dictation key"), icon: "keyboard")
         let keyMenu = NSMenu()
         for hk in HOTKEYS {
             let item = NSMenuItem(title: hk.title, action: #selector(pickHotkey(_:)), keyEquivalent: "")
@@ -215,70 +253,101 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(keyItem)
 
         // плашка с волной у места набора
-        let waveItem = NSMenuItem(title: L("Волна у курсора", "Wave near cursor"),
-                                  action: #selector(toggleWave), keyEquivalent: "")
-        waveItem.target = self
+        let waveItem = mkItem(L("Волна у курсора", "Wave near cursor"),
+                              icon: "waveform", action: #selector(toggleWave))
         waveItem.state = waveEnabled ? .on : .off
         menu.addItem(waveItem)
 
-        // цвет волны — без волны выбирать нечего
-        let colorItem = NSMenuItem(title: L("Цвет волны", "Wave color"), action: nil, keyEquivalent: "")
-        colorItem.isEnabled = waveEnabled
-        let colorMenu = NSMenu()
-        let current = UserDefaults.standard.string(forKey: "waveColor") ?? "dark"
-        for (id, name) in [("dark", L("Тёмный", "Dark")),
-                           ("green", L("Зелёный", "Green")),
-                           ("red", L("Красный", "Red"))] {
-            let it = NSMenuItem(title: name, action: #selector(pickWaveColor(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = id
-            it.state = current == id ? .on : .off
-            colorMenu.addItem(it)
-        }
-        colorItem.submenu = colorMenu
-        menu.addItem(colorItem)
-
         // автозапуск при входе
-        let login = NSMenuItem(title: L("Запускать при входе", "Open at login"), action: #selector(toggleLogin), keyEquivalent: "")
-        login.target = self
+        let login = mkItem(L("Запускать при входе", "Open at login"),
+                           icon: "power", action: #selector(toggleLogin))
         login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         menu.addItem(login)
 
-        if WavePanel.pinned != nil {
-            let unpin = NSMenuItem(title: L("Вернуть волну к курсору", "Wave: follow cursor again"),
-                                   action: #selector(unpinWave), keyEquivalent: "")
-            unpin.target = self
-            unpin.isEnabled = waveEnabled
-            menu.addItem(unpin)
+        // язык интерфейса: авто / русский / английский
+        let langItem = mkItem(L("Язык меню", "Menu language"), icon: "globe")
+        let langMenu = NSMenu()
+        let curLang = UserDefaults.standard.string(forKey: "uiLang") ?? "auto"
+        for (code, name) in [("auto", L("Авто (как система)", "Auto (match system)")),
+                             ("ru", "Русский"), ("en", "English")] {
+            let it = NSMenuItem(title: name, action: #selector(pickLang(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = code
+            it.state = curLang == code ? .on : .off
+            langMenu.addItem(it)
         }
+        langItem.submenu = langMenu
+        menu.addItem(langItem)
 
-        let lastItem = NSMenuItem(title: L("Скопировать последнюю диктовку", "Copy last dictation"),
-                                  action: #selector(copyLast), keyEquivalent: "")
-        lastItem.target = self
-        lastItem.isEnabled = lastText != nil
-        menu.addItem(lastItem)
-
-        let perms = NSMenuItem(title: L("Доступы…", "Permissions…"),
-                               action: #selector(showOnboarding), keyEquivalent: "")
-        perms.target = self
-        menu.addItem(perms)
-
+        // Мозг: локальная нейронка правит текст по команде «Писарь, …»
+        menu.addItem(NSMenuItem.separator())
+        let brainHead = mkItem(L("Мозг Писаря", "Pisar's brain"),
+                               sub: L("причёсывает надиктованный текст", "polishes dictated text"),
+                               icon: "brain")
+        brainHead.isEnabled = false
+        menu.addItem(brainHead)
+        if Brain.shared.engineAvailable {
+            let off = mkItem(L("Выключен", "Off"), action: #selector(pickBrain(_:)))
+            off.representedObject = "off"
+            off.state = Brain.shared.chosenId == nil ? .on : .off
+            menu.addItem(off)
+            for m in BRAIN_MODELS {
+                let it: NSMenuItem
+                if Brain.shared.downloadingId == m.id {
+                    it = mkItem(L("\(m.name) — качаю \(Brain.shared.downloadPercent)%",
+                                  "\(m.name) — downloading \(Brain.shared.downloadPercent)%"),
+                                sub: L("нажми, чтобы отменить", "click to cancel"),
+                                action: #selector(pickBrain(_:)))
+                } else if !Brain.shared.downloaded(m) {
+                    it = mkItem(L("\(m.name) — скачать \(m.sizeText)",
+                                  "\(m.name) — download \(m.sizeText)"),
+                                sub: m.details, action: #selector(pickBrain(_:)))
+                } else {
+                    it = mkItem(m.name, sub: m.details, action: #selector(pickBrain(_:)))
+                    it.state = Brain.shared.chosenId == m.id ? .on : .off
+                }
+                it.representedObject = m.id
+                menu.addItem(it)
+            }
+            // как звать Писаря: менюшка у курсора или только голосом
+            menu.addItem(NSMenuItem.separator())
+            let menuMode = mkItem(L("Менюшка после вставки", "Menu after pasting"),
+                                  sub: L("у курсора: 1 мысль · 2 сократить · 3 перевести",
+                                         "at the cursor: 1 compose · 2 shorten · 3 translate"),
+                                  action: #selector(pickChipsMode(_:)))
+            menuMode.representedObject = "menu"
+            menuMode.state = Brain.shared.chipsEnabled ? .on : .off
+            menuMode.isEnabled = Brain.shared.chosenId != nil
+            menu.addItem(menuMode)
+            let voiceMode = mkItem(L("Только голосом", "Voice only"),
+                                   sub: L("скажи в конце: «Писарь, исправь / переведи…»",
+                                          "end with: \u{201C}Pisar, fix this / translate\u{2026}\u{201D}"),
+                                   action: #selector(pickChipsMode(_:)))
+            voiceMode.representedObject = "voice"
+            voiceMode.state = Brain.shared.chipsEnabled ? .off : .on
+            voiceMode.isEnabled = Brain.shared.chosenId != nil
+            menu.addItem(voiceMode)
+        } else {
+            let no = mkItem(L("Нужен мак с M-чипом", "Requires Apple Silicon"))
+            no.isEnabled = false
+            menu.addItem(no)
+        }
         menu.addItem(NSMenuItem.separator())
 
-        // версия и обновления
+        menu.addItem(mkItem(L("Доступы…", "Permissions…"), icon: "lock.shield",
+                            action: #selector(showOnboarding)))
+        menu.addItem(NSMenuItem.separator())
+
+        // версия и обновления — одним компактным пунктом
         if let upd = updateAvailable {
-            let it = NSMenuItem(title: L("Доступна версия \(upd) — обновить", "Version \(upd) available — update"),
-                                action: #selector(startSelfUpdate), keyEquivalent: "")
-            it.target = self
-            menu.addItem(it)
+            menu.addItem(mkItem(L("Доступна версия \(upd) — обновить",
+                                  "Version \(upd) available — update"),
+                                icon: "arrow.down.circle", action: #selector(startSelfUpdate)))
         }
-        let ver = NSMenuItem(title: L("Версия \(APP_VERSION)", "Version \(APP_VERSION)"), action: nil, keyEquivalent: "")
-        ver.isEnabled = false
-        menu.addItem(ver)
-        let check = NSMenuItem(title: L("Проверить обновления…", "Check for updates…"),
-                               action: #selector(checkUpdatesManual), keyEquivalent: "")
-        check.target = self
-        menu.addItem(check)
+        menu.addItem(mkItem(L("Проверить обновления…", "Check for updates…"),
+                            sub: L("сейчас стоит \(APP_VERSION)", "installed: \(APP_VERSION)"),
+                            icon: "arrow.triangle.2.circlepath",
+                            action: #selector(checkUpdatesManual)))
 
         menu.addItem(NSMenuItem.separator())
         let quit = NSMenuItem(title: L("Выйти", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -297,24 +366,6 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func showOnboarding() { onboarding.show() }
-
-    @objc func copyLast() {
-        guard let t = lastText else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(t, forType: .string)
-        Toast.shared.show(L("В буфере — нажми ⌘V", "On the clipboard — press ⌘V"), seconds: 2)
-    }
-
-    @objc func pickWaveColor(_ sender: NSMenuItem) {
-        UserDefaults.standard.set(sender.representedObject as? String, forKey: "waveColor")
-        buildMenu()
-    }
-
-    @objc func unpinWave() {
-        WavePanel.pinned = nil
-        buildMenu()
-    }
 
     @objc func toggleWave() {
         UserDefaults.standard.set(!waveEnabled, forKey: "wavePanel")
@@ -519,6 +570,50 @@ final class App: NSObject, NSApplicationDelegate {
     // клавиатуры был избыточен; проверено опытом: flagsChanged приходит
     // без разрешений, keyDown — нет.
 
+    @objc func pickLang(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(code, forKey: "uiLang")
+        buildMenu()
+    }
+
+    @objc func pickChipsMode(_ sender: NSMenuItem) {
+        Brain.shared.chipsEnabled = (sender.representedObject as? String) == "menu"
+        buildMenu()
+    }
+
+    @objc func pickBrain(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        if id == "off" {
+            Brain.shared.chosenId = nil
+            Brain.shared.stopServer()
+            buildMenu()
+            return
+        }
+        guard let m = BRAIN_MODELS.first(where: { $0.id == id }) else { return }
+        if Brain.shared.downloadingId == m.id {
+            Brain.shared.cancelDownload()
+            return
+        }
+        guard Brain.shared.downloaded(m) else {
+            // Честно предупредить, если памяти впритык.
+            let ramGB = ProcessInfo.processInfo.physicalMemory / (1 << 30)
+            if ramGB < m.minRAMGB {
+                let a = NSAlert()
+                a.messageText = L("Может быть тесно", "Might be a tight fit")
+                a.informativeText = L("У этого мака \(ramGB) ГБ памяти, а \(m.name) просит от \(m.minRAMGB) ГБ. Заработает, но медленно и прожорливо. Всё равно скачать?",
+                                      "This Mac has \(ramGB) GB of RAM and \(m.name) wants \(m.minRAMGB)+. It will run, but slowly. Download anyway?")
+                a.addButton(withTitle: L("Скачать", "Download"))
+                a.addButton(withTitle: L("Отмена", "Cancel"))
+                guard a.runModal() == .alertFirstButtonReturn else { return }
+            }
+            Brain.shared.startDownload(m)
+            return
+        }
+        Brain.shared.chosenId = id
+        Brain.shared.ensureServer()
+        buildMenu()
+    }
+
     func startKeyMonitors() {
         NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
             self?.handleFlags(e)
@@ -640,8 +735,40 @@ final class App: NSObject, NSApplicationDelegate {
                 return
             }
             DispatchQueue.main.async {
-                self?.setState(.idle)
-                if текст.isEmpty { self?.flashError() } else { self?.paste(текст) }
+                guard let self else { return }
+                if текст.isEmpty {
+                    self.setState(.idle)
+                    self.flashError()
+                    return
+                }
+                // Обращение «Писарь, …» в конце? Сперва текст идёт в мозг.
+                if let (body, cmd) = Brain.parseCommand(текст) {
+                    guard Brain.shared.ready, Brain.shared.engineAvailable else {
+                        self.setState(.idle)
+                        self.paste(текст)
+                        if Brain.shared.chosenId == nil, Brain.shared.engineAvailable {
+                            Toast.shared.show(L("Похоже на команду Писарю — включи мозг в меню Гиги",
+                                                "Sounded like a Pisar command — pick a brain in the Giga menu"))
+                        }
+                        return
+                    }
+                    // остаёмся в .busy: точки в строке меню, серая волна — «думаю»
+                    Brain.shared.transform(body, command: cmd) { out in
+                        DispatchQueue.main.async {
+                            self.setState(.idle)
+                            if let out {
+                                self.paste(out)
+                            } else {
+                                self.paste(текст)
+                                Toast.shared.show(L("Писарь не справился — вставил как есть",
+                                                    "Pisar could not do it — pasted as is"))
+                            }
+                        }
+                    }
+                    return
+                }
+                self.setState(.idle)
+                self.paste(текст, offerChips: true)
             }
         }
     }
@@ -654,13 +781,99 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    func paste(_ text: String) {
+    /// В терминалах ⌘Z не откатывает текст — там кнопочки не показываем.
+    static let terminalApps: Set<String> = [
+        "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
+        "net.kovidgoyal.kitty", "com.github.wez.wezterm", "co.zeit.hyper",
+        "com.mitchellh.ghostty",
+    ]
+    var frontIsTerminal: Bool {
+        guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        else { return false }
+        return App.terminalApps.contains(id)
+    }
+
+    /// Нажать клавишу с модификаторами за пользователя (⌘V, ⌘Z…).
+    func pressKey(_ vk: CGKeyCode, _ flags: CGEventFlags) {
+        let src = CGEventSource(stateID: .combinedSessionState)
+        let down = CGEvent(keyboardEventSource: src, virtualKey: vk, keyDown: true)
+        down?.flags = flags
+        let up = CGEvent(keyboardEventSource: src, virtualKey: vk, keyDown: false)
+        up?.flags = flags
+        down?.post(tap: .cgSessionEventTap)
+        up?.post(tap: .cgSessionEventTap)
+    }
+
+    /// Убрать только что вставленный текст перед подменой. В обычных
+    /// полях — откат ⌘Z. В терминале отката нет, а ⌃U работает не везде
+    /// (в поле ввода Claude Code — нет), поэтому надёжнее стереть
+    /// вставленное побуквенно: Backspace ровно столько раз, сколько
+    /// символов вставили. Курсор после вставки стоит в конце — попадаем.
+    func undoInsert(chars: Int) {
+        if frontIsTerminal {
+            for i in 0..<min(chars, 4000) {
+                pressKey(51, []) // Backspace
+                if i % 25 == 24 { usleep(8000) } // терминалу нужен вдох
+            }
+        } else {
+            pressKey(6, .maskCommand) // ⌘Z
+        }
+    }
+
+    /// Меню Писаря у точки набора. В терминале — в терминальном костюме.
+    func showChipsMenu() {
+        let p = typingAnchorIfKnown() ?? NSEvent.mouseLocation
+        Chips.shared.show(near: p, terminal: frontIsTerminal) { [weak self] cmd in
+            self?.applyChip(cmd)
+        }
+    }
+
+    /// Клик по кнопочке: прогнать вставленное через мозг и подменить
+    /// (откатываем свою вставку через ⌘Z и вставляем причёсанное).
+    func applyChip(_ command: String) {
+        guard let text = lastText else { return }
+        setState(.busy)
+        Brain.shared.transform(text, command: command) { [weak self] out in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.setState(.idle)
+                guard let out else {
+                    Toast.shared.show(L("Писарь не справился — оставил как было",
+                                        "Pisar could not do it — left it as is"))
+                    return
+                }
+                let original = text
+                self.undoInsert(chars: text.count)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    self.paste(out)
+                    // рядом повисает «Вернуть как было» — вдруг не понравилось
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        let p = typingAnchorIfKnown() ?? NSEvent.mouseLocation
+                        Chips.shared.showRevert(near: p, terminal: self.frontIsTerminal) { [weak self] in
+                            guard let self else { return }
+                            self.undoInsert(chars: out.count)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                self.paste(original)
+                                // вернули — и снова предлагаем команды:
+                                // меню живёт до Enter или крестика
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                    self.showChipsMenu()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func paste(_ text: String, offerChips: Bool = false) {
         lastText = text
         buildMenu() // в меню оживает «Скопировать последнюю диктовку»
 
-        // Вставляем через буфер (быстро и надёжно), старое содержимое возвращаем.
+        // Вставляем через буфер (быстро и надёжно). Диктовка в буфере
+        // и остаётся: захотел вставить ещё раз в другом месте — просто ⌘V.
         let pb = NSPasteboard.general
-        let old = pb.string(forType: .string)
         pb.clearContents()
         pb.setString(text, forType: .string)
 
@@ -690,10 +903,10 @@ final class App: NSObject, NSApplicationDelegate {
         down?.post(tap: .cgSessionEventTap)
         up?.post(tap: .cgSessionEventTap)
         if вПоле {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                if let old {
-                    pb.clearContents()
-                    pb.setString(old, forType: .string)
+            // Менюшка: сырой текст вставлен, предложить причесать.
+            if offerChips, Brain.shared.ready, Brain.shared.chipsEnabled {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.showChipsMenu()
                 }
             }
         } else {

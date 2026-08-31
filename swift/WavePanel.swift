@@ -208,8 +208,6 @@ final class WaveView: NSView {
         if dragged, let w = window {
             WavePanel.pinned = w.frame.origin
             NSLog("Гига волна: перетащена и прибита к \(w.frame.origin)")
-            // в меню появляется пункт «Вернуть волну к курсору»
-            (NSApp.delegate as? App)?.buildMenu()
         }
         dragMouse = nil; dragOrigin = nil; dragged = false
     }

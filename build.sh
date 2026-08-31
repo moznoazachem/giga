@@ -24,12 +24,24 @@ if [ ! -d "$ORT_DIR" ]; then
 fi
 ORT_LIB="$ORT_DIR/lib/libonnxruntime.$ORT_VER.dylib"
 
+# Движок мозга Писаря: llama-server из готовой сборки llama.cpp.
+# Только Apple Silicon: на Intel локальная нейронка мучилась бы.
+LLAMA_BUILD="b10701"
+LLAMA_DIR="vendor/llama-$LLAMA_BUILD"
+LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_BUILD/llama-$LLAMA_BUILD-bin-macos-arm64.tar.gz"
+if [ ! -d "$LLAMA_DIR" ]; then
+    echo "── качаю llama.cpp $LLAMA_BUILD (11 МБ, мозг Писаря)"
+    curl -fL --progress-bar -o vendor/llama.tgz "$LLAMA_URL"
+    tar xzf vendor/llama.tgz -C vendor
+    rm vendor/llama.tgz
+fi
+
 APP="build/Giga Pisar.app"
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 
 SOURCES=(main.swift swift/Ort.swift swift/Features.swift swift/Tokenizer.swift
-         swift/Recognizer.swift swift/Audio.swift swift/Mic.swift swift/WavePanel.swift swift/Updates.swift
+         swift/Recognizer.swift swift/Audio.swift swift/Mic.swift swift/WavePanel.swift swift/Chips.swift swift/Brain.swift swift/Updates.swift
          swift/Onboarding.swift swift/SelfUpdate.swift)
 
 # универсальный бинарник: Apple Silicon + Intel в одном файле
@@ -66,6 +78,10 @@ if [ "$WITH_MODEL" = "1" ]; then
         "$APP/Contents/Resources/model/v3_e2e_rnnt.yaml"
 fi
 
+# Мозг Писаря: движок и библиотеки одной папкой (@loader_path сами найдутся)
+mkdir -p "$APP/Contents/Frameworks/llama"
+cp -a "$LLAMA_DIR/llama-server" "$LLAMA_DIR"/lib*.dylib "$APP/Contents/Frameworks/llama/"
+
 # Подпись стабильным сертификатом: разрешения (микрофон, мониторинг ввода)
 # переживают пересборки. Приоритет: Apple Development → Giga Dev → ad-hoc.
 if security find-identity -p codesigning -v | grep -q "Apple Development"; then
@@ -77,6 +93,8 @@ else
 fi
 echo "── подпись: $SIGN_ID"
 codesign --force --sign "$SIGN_ID" "$APP/Contents/Frameworks/libonnxruntime.$ORT_VER.dylib"
+find "$APP/Contents/Frameworks/llama" -type f \( -name "*.dylib" -o -name "llama-server" \) \
+    -exec codesign --force --sign "$SIGN_ID" {} \;
 codesign --force --sign "$SIGN_ID" "$APP"
 
 # Установка в «Программы»: там приложение видно в Finder и Spotlight.
