@@ -200,9 +200,20 @@ enum SelfUpdate {
 
         // подмена после нашего выхода
         let script = dir + "/swap.sh"
+        // Модель распознавания может жить внутри старого бандла (толстые
+        // выпуски кладут её в Resources/model). Если новый выпуск худой,
+        // модель нельзя терять вместе со старым бандлом — спасаем её
+        // в ~/.giga/model, где приложение тоже умеет искать. В сам новый
+        // бандл не кладём: это сломало бы его подпись.
         let sh = """
         #!/bin/sh
         while /bin/kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do /bin/sleep 0.3; done
+        if [ ! -d "\(newApp)/Contents/Resources/model" ] \\
+           && [ -d "\(dest)/Contents/Resources/model" ] \\
+           && [ ! -d "$HOME/.giga/model" ]; then
+            /bin/mkdir -p "$HOME/.giga"
+            /usr/bin/ditto "\(dest)/Contents/Resources/model" "$HOME/.giga/model"
+        fi
         /bin/rm -rf "\(dest)"
         /usr/bin/ditto "\(newApp)" "\(dest)"
         /usr/bin/open "\(dest)"

@@ -141,7 +141,19 @@ final class App: NSObject, NSApplicationDelegate {
             UserDefaults.standard.set(true, forKey: "wavePinBugFixed2")
             WavePanel.pinned = nil
         }
-        Brain.shared.onChange = { [weak self] in self?.buildMenu() }
+        Brain.shared.onChange = { [weak self] in
+            guard let self else { return }
+            if let id = Brain.shared.downloadingId,
+               let m = BRAIN_MODELS.first(where: { $0.id == id }),
+               let item = self.dlMenuItem {
+                item.attributedTitle = self.menuAttrTitle(
+                    L("\(m.name) — качаю \(Brain.shared.downloadPercent)%",
+                      "\(m.name) — downloading \(Brain.shared.downloadPercent)%"),
+                    sub: L("нажми, чтобы отменить", "click to cancel"))
+            } else {
+                self.buildMenu()
+            }
+        }
         buildMenu()
         loadModel()
         startKeyMonitors()
@@ -209,6 +221,11 @@ final class App: NSObject, NSApplicationDelegate {
             it.image = img
         }
         // все пункты через attributedTitle: так шрифт мельче системного
+        it.attributedTitle = menuAttrTitle(title, sub: sub)
+        return it
+    }
+
+    func menuAttrTitle(_ title: String, sub: String?) -> NSAttributedString {
         let t = NSMutableAttributedString(
             string: title,
             attributes: [.font: NSFont.menuFont(ofSize: 12),
@@ -219,8 +236,7 @@ final class App: NSObject, NSApplicationDelegate {
                 attributes: [.font: NSFont.menuFont(ofSize: 10),
                              .foregroundColor: NSColor.secondaryLabelColor]))
         }
-        it.attributedTitle = t
-        return it
+        return t
     }
 
     /// Заголовок раздела — своя отрисовка: обычный отключённый пункт мак
@@ -254,7 +270,12 @@ final class App: NSObject, NSApplicationDelegate {
         return it
     }
 
+    /// Строка «качаю N%» в меню: открытое меню целиком не перестроить,
+    /// а заголовок существующего пункта оно перерисовывает вживую.
+    weak var dlMenuItem: NSMenuItem?
+
     func buildMenu() {
+        dlMenuItem = nil
         let menu = NSMenu()
         // включённостью пунктов управляем сами: серые должны быть серыми,
         // даже если у них есть подменю
@@ -319,6 +340,7 @@ final class App: NSObject, NSApplicationDelegate {
                                   "\(m.name) — downloading \(Brain.shared.downloadPercent)%"),
                                 sub: L("нажми, чтобы отменить", "click to cancel"),
                                 action: #selector(pickBrain(_:)))
+                    dlMenuItem = it
                 } else if !Brain.shared.downloaded(m) {
                     it = mkItem(L("\(m.name) — скачать \(m.sizeText)",
                                   "\(m.name) — download \(m.sizeText)"),
