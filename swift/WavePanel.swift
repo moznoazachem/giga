@@ -296,15 +296,16 @@ final class Toast {
         panel.orderOut(nil)
     }
 
-    func show(_ text: String, seconds: Double = 3.5) {
+    func show(_ text: String, seconds: Double = 3.5, near point: NSPoint? = nil) {
         label.stringValue = text
         label.sizeToFit()
         let pad: CGFloat = 12
         let size = NSSize(width: label.frame.width + pad * 2,
                           height: label.frame.height + pad)
         label.setFrameOrigin(NSPoint(x: pad, y: pad / 2))
-        // у места набора, а не у мыши: смотрят туда, где появится текст
-        let p = typingAnchorIfKnown() ?? NSEvent.mouseLocation
+        // якорь можно задать снаружи (например, под иконкой в строке меню);
+        // иначе — у места набора: смотрят туда, где появится текст
+        let p = point ?? typingAnchorIfKnown() ?? NSEvent.mouseLocation
         var origin = NSPoint(x: p.x + 14, y: p.y - size.height - 12)
         let screen = NSScreen.screens.first { $0.frame.contains(p) } ?? NSScreen.main
         if let f = screen?.visibleFrame {

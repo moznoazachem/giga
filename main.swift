@@ -422,8 +422,14 @@ final class App: NSObject, NSApplicationDelegate {
             return
         }
         guard !SelfUpdate.inProgress else { return }
-        Toast.shared.show(L("Скачиваю версию \(ver)… Ход дела — в строке меню. Диктовка пока работает как обычно.",
-                            "Downloading \(ver)… Progress is in the menu bar. Dictation keeps working meanwhile."), seconds: 6)
+        // подсказка висит под нашей иконкой в строке меню, где и проценты,
+        // а не посреди чужого экрана
+        let underIcon = statusItem.button?.window.map {
+            NSPoint(x: $0.frame.midX - 120, y: $0.frame.minY - 2)
+        }
+        Toast.shared.show(L("Скачиваю версию \(ver)… Ход дела — тут, в строке меню. Диктовка пока работает как обычно.",
+                            "Downloading \(ver)… Progress is right here in the menu bar. Dictation keeps working meanwhile."),
+                          seconds: 6, near: underIcon)
         SelfUpdate.run(zips: updateDownloads, version: ver, report: { [weak self] s in
             // ход дела рядом с иконкой: «↓ 43%», потом «проверяю…»
             self?.statusItem.button?.imagePosition = .imageLeft
