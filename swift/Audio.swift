@@ -21,6 +21,7 @@ enum Audio {
             let id = u32(i), size = Int(u32(i + 4))
             let body = i + 8
             if id == 0x2074_6D66 {                    // "fmt "
+                guard body + 16 <= data.count else { throw OrtError.failed("битый wav: \(path)") }
                 channels = Int(u16(body + 2))
                 rate = Int(u32(body + 4))
                 bits = Int(u16(body + 14))

@@ -50,9 +50,10 @@ private func tryManifest(_ i: Int, _ done: @escaping (UpdateInfo?) -> Void) {
         }
         var urls = list.compactMap { URL(string: $0) }
         // ответившая площадка надёжнее для этого пользователя —
-        // её ссылку ставим первой
+        // её ссылку ставим первой (сравниваем оба элемента честно:
+        // компаратор, глядящий только на левый, ломает сортировке инварианты)
         if let host = url.host {
-            urls.sort { a, _ in a.host == host }
+            urls.sort { ($0.host == host ? 0 : 1) < ($1.host == host ? 0 : 1) }
         }
         done(UpdateInfo(version: version, downloads: urls))
     }.resume()

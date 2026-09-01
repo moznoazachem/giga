@@ -286,11 +286,11 @@ final class Chips {
             DispatchQueue.main.async { [weak self] in self?.hide() }
             return nil
         case 18, 83: // «1» (и на цифровом блоке)
-            return pickByNumber(0)
+            return pickByNumber(0, event)
         case 19, 84: // «2»
-            return pickByNumber(1)
+            return pickByNumber(1, event)
         case 20, 85: // «3»
-            return pickByNumber(2)
+            return pickByNumber(2, event)
         case 55, 56, 58, 59, 61, 62, 63: // модификаторы меню не гасят
             return Unmanaged.passUnretained(event)
         case 51, 117: // Backspace и Delete: стирает текст — подсказка не нужна
@@ -304,10 +304,11 @@ final class Chips {
 
     /// Цифра — мгновенный выбор пункта, как в меню консольных программ.
     /// Съедаем клавишу, чтобы цифра не упала в текст.
-    private func pickByNumber(_ i: Int) -> Unmanaged<CGEvent>? {
+    private func pickByNumber(_ i: Int, _ event: CGEvent) -> Unmanaged<CGEvent>? {
         guard i < rows.count else {
+            // цифры, которой нет в меню: прячемся, а клавишу отдаём тексту
             DispatchQueue.main.async { [weak self] in self?.hide() }
-            return nil
+            return Unmanaged.passUnretained(event)
         }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

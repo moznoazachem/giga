@@ -46,12 +46,13 @@ struct Hotkey {
     let flag: NSEvent.ModifierFlags
 }
 
-let HOTKEYS: [Hotkey] = [
+// Вычисляется при каждом обращении: названия следуют за языком меню.
+var HOTKEYS: [Hotkey] { [
     Hotkey(id: "rcmd", title: L("Правый ⌘", "Right ⌘"), keycode: 54, flag: .command),
     Hotkey(id: "ropt", title: L("Правый ⌥", "Right ⌥"), keycode: 61, flag: .option),
     Hotkey(id: "rctrl", title: L("Правый ⌃", "Right ⌃"), keycode: 62, flag: .control),
     Hotkey(id: "fn", title: "Fn (🌐)", keycode: 63, flag: .function),
-]
+] }
 
 func currentHotkey() -> Hotkey {
     let id = UserDefaults.standard.string(forKey: "hotkey") ?? "rcmd"
@@ -485,7 +486,10 @@ final class App: NSObject, NSApplicationDelegate {
                     return
                 }
                 guard isNewerVersion(latest, than: APP_VERSION) else {
-                    self.updateAvailable = nil
+                    if self.updateAvailable != nil {
+                        self.updateAvailable = nil
+                        self.buildMenu() // убрать устаревшее «доступна версия…»
+                    }
                     if !silent {
                         let a = NSAlert()
                         a.messageText = L("У тебя последняя версия", "You're up to date")
@@ -892,11 +896,15 @@ final class App: NSObject, NSApplicationDelegate {
         // короткая красная вспышка иконки вместо алерта
         statusItem.button?.image = barsImage([13, 4, 13, 4, 13], red: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            self?.setState(.idle)
+            // за эти секунды могла начаться новая запись — её не сбиваем
+            guard let self, self.state == .idle else { return }
+            self.setState(.idle)
         }
     }
 
-    /// В терминалах ⌘Z не откатывает текст — там кнопочки не показываем.
+    /// Терминалы: ⌘Z там не откатывает текст, поэтому подмена другая —
+    /// стираем вставленное побуквенно (см. undoInsert), а меню Писаря
+    /// одевается в терминальный костюм.
     static let terminalApps: Set<String> = [
         "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
         "net.kovidgoyal.kitty", "com.github.wez.wezterm", "co.zeit.hyper",
@@ -984,7 +992,6 @@ final class App: NSObject, NSApplicationDelegate {
 
     func paste(_ text: String, offerChips: Bool = false) {
         lastText = text
-        buildMenu() // в меню оживает «Скопировать последнюю диктовку»
 
         // Вставляем через буфер (быстро и надёжно). Диктовка в буфере
         // и остаётся: захотел вставить ещё раз в другом месте — просто ⌘V.
@@ -1010,13 +1017,7 @@ final class App: NSObject, NSApplicationDelegate {
             a.runModal()
             return
         }
-        let src = CGEventSource(stateID: .combinedSessionState)
-        let down = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true) // V
-        down?.flags = .maskCommand
-        let up = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
-        up?.flags = .maskCommand
-        down?.post(tap: .cgSessionEventTap)
-        up?.post(tap: .cgSessionEventTap)
+        pressKey(9, .maskCommand) // ⌘V
         if вПоле {
             // Менюшка: сырой текст вставлен, предложить причесать.
             if offerChips, Brain.shared.ready, Brain.shared.chipsEnabled {

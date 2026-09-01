@@ -93,7 +93,6 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
     private(set) var downloadPercent = 0
     private var dlSession: URLSession?
     private var dlTask: URLSessionDownloadTask?
-    private var dlResume: Data?
     private var dlRetries = 0
 
     func startDownload(_ m: BrainModel) {
@@ -111,7 +110,7 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
     func cancelDownload() {
         dlTask?.cancel()
         dlSession?.invalidateAndCancel()
-        dlTask = nil; dlSession = nil; dlResume = nil
+        dlTask = nil; dlSession = nil
         downloadingId = nil
         onChange?()
     }
