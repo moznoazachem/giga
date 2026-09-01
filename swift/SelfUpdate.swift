@@ -17,7 +17,7 @@
 import AppKit
 
 /// Качает файл и рассказывает, сколько уже скачано. Живёт, пока качает.
-private final class Downloader: NSObject, URLSessionDownloadDelegate {
+final class Downloader: NSObject, URLSessionDownloadDelegate {
     private let onPercent: (Int) -> Void
     private let onDone: (URL?, String?) -> Void // (файл, причина беды)
     private var session: URLSession!

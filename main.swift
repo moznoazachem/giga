@@ -547,12 +547,74 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Модели нет ни в бандле, ни в ~/.giga/model: так бывает у тонкого
+    /// выпуска на свежем маке. Никаких «запусти скрипт» — качаем сами.
+    /// Один раз: дальше модель живёт в ~/.giga/model и переживает
+    /// любые обновления (swap.sh её ещё и подстраховывает).
     func complainNoModel() {
         let a = NSAlert()
-        a.messageText = L("Не нашёл файлы модели", "Speech model not found")
-        a.informativeText = L("Ожидались в ~/.giga/model. Поставь их скриптом install.sh из репозитория.",
-                              "Expected in ~/.giga/model. Install them with install.sh from the repository.")
-        a.runModal()
+        a.messageText = L("Остался один шаг — модель распознавания",
+                          "One last piece — the speech model")
+        a.informativeText = L("Это «уши» Писаря: 204 МБ, качается один раз и переживает все обновления. Ход дела будет виден в строке меню.",
+                              "Pisar's ears: a one-time 204 MB download that survives every update. Progress shows in the menu bar.")
+        a.addButton(withTitle: L("Скачать", "Download"))
+        a.addButton(withTitle: L("Позже", "Later"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        downloadSpeechModel()
+    }
+
+    var modelDL: Downloader?
+
+    func downloadSpeechModel() {
+        guard modelDL == nil else { return }
+        let url = URL(string: "https://github.com/moznoazachem/giga-pisar/releases/latest/download/gigaam-v3-onnx-int8.tar.gz")!
+        statusItem.button?.imagePosition = .imageLeft
+        modelDL = Downloader(onPercent: { [weak self] p in
+            self?.statusItem.button?.title = " ↓\(p)%"
+        }, onDone: { [weak self] file, беда in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.modelDL = nil
+                self.statusItem.button?.title = ""
+                guard let file else {
+                    Toast.shared.show(L("Модель не скачалась (\(беда ?? "сеть")) — попробуй позже, окно появится снова при запуске",
+                                        "Model download failed (\(беда ?? "network")) — try again later, the prompt returns on launch"))
+                    return
+                }
+                self.unpackSpeechModel(file)
+            }
+        })
+        modelDL?.download(url)
+    }
+
+    private func unpackSpeechModel(_ file: URL) {
+        statusItem.button?.title = " …"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let dest = NSHomeDirectory() + "/.giga/model"
+            try? FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true)
+            let tar = Process()
+            tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+            tar.arguments = ["xzf", file.path, "-C", dest, "--strip-components=1"]
+            var ok = false
+            do {
+                try tar.run()
+                tar.waitUntilExit()
+                ok = tar.terminationStatus == 0 && findModelDir() != nil
+            } catch {}
+            try? FileManager.default.removeItem(at: file)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.statusItem.button?.title = ""
+                if ok {
+                    self.loadModel()
+                    Toast.shared.show(L("Модель на месте — зажимай \(currentHotkey().title) и диктуй!",
+                                        "Model is in — hold \(currentHotkey().title) and dictate!"))
+                } else {
+                    Toast.shared.show(L("Архив модели не распаковался — попробуй ещё раз",
+                                        "Couldn't unpack the model — try again"))
+                }
+            }
+        }
     }
 
     // MARK: запуск не из «Программ»

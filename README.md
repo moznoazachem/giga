@@ -66,8 +66,9 @@ open "/Applications/Giga Pisar.app"
 
 Building needs Xcode or Command Line Tools. Nothing else.
 
-Or grab the ready-made app from [Releases](../../releases) — it ships with the
-model inside: download, drag to Applications, done.
+Or grab the ready-made app from [Releases](../../releases): download, drag to
+Applications, open — on first launch it offers to download the speech model
+itself (204 MB, once; it survives every update in ~/.giga/model).
 
 You can also build a self-contained app with the model embedded:
 
@@ -231,8 +232,10 @@ open "/Applications/Giga Pisar.app"
 
 Для сборки нужен Xcode или Command Line Tools. Больше ничего ставить не надо.
 
-Либо возьми готовое приложение из [Releases](../../releases) — там сборка
-с моделью внутри: скачал, перетащил в Программы, больше ничего не нужно.
+Либо возьми готовое приложение из [Releases](../../releases): скачал,
+перетащил в Программы, открыл — модель распознавания оно предложит скачать
+само (204 МБ, один раз; дальше она живёт в ~/.giga/model и переживает
+все обновления).
 
 Можно собрать самодостаточное приложение, с моделью внутри:
 
