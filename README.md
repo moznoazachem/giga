@@ -162,6 +162,7 @@ replaces itself and relaunches. Nothing is ever installed without the click.
 ### Credits
 
 - [GigaAM](https://github.com/salute-developers/GigaAM) — the recognition model, SberDevices (MIT)
+- [Vitaliy Kuzmenko](https://github.com/vitkuzmenko) — the live voice wave (real loudness metering)
 
 ### License
 
@@ -331,6 +332,7 @@ tccutil reset Accessibility ru.panda.giga
 ### Благодарности
 
 - [GigaAM](https://github.com/salute-developers/GigaAM) — модель распознавания, SberDevices (MIT)
+- [Виталий Кузьменко](https://github.com/vitkuzmenko) — живая волна от настоящей громкости голоса
 
 ### Лицензия
 
