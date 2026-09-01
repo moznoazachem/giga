@@ -29,7 +29,7 @@ struct BrainModel {
 
 var BRAIN_MODELS: [BrainModel] { [
     BrainModel(id: "gigachat",
-               name: "GigaChat (Сбер)",
+               name: "GigaChat",
                details: L("родной русский · 6,5 ГБ · маки от 16 ГБ",
                           "native Russian · 6.5 GB · Macs with 16 GB"),
                file: "GigaChat3.1-10B-A1.8B-q4_K_M.gguf",
