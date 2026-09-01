@@ -61,32 +61,31 @@ func currentHotkey() -> Hotkey {
 
 // MARK: - Иконки (рисуем векторно, template → ЧБ под тему строки меню)
 
-func barsImage(_ heights: [CGFloat], red: Bool) -> NSImage {
+/// Столбики в строке меню. Цвет не задан — шаблонная иконка покоя,
+/// чёрно-белая под тему строки меню. Задан — состояние: красный «пишу»,
+/// синий «думаю», те же цвета, что у плашки возле курсора.
+func barsImage(_ heights: [CGFloat], color: NSColor? = nil) -> NSImage {
     let img = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
-        let color = red ? NSColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 1) : NSColor.black
-        color.setFill()
+        (color ?? NSColor.black).setFill()
         for (i, h) in heights.enumerated() {
             let r = NSRect(x: 1 + CGFloat(i) * 4.2, y: 9 - h / 2, width: 2.8, height: h)
             NSBezierPath(roundedRect: r, xRadius: 1.3, yRadius: 1.3).fill()
         }
         return true
     }
-    img.isTemplate = !red
+    img.isTemplate = (color == nil)
     return img
 }
 
-func dotsImage(_ count: Int) -> NSImage {
-    let img = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
-        NSColor.black.setFill()
-        for i in 0..<count {
-            let r = NSRect(x: 1.2 + CGFloat(i) * 6.5, y: 7.2, width: 3.6, height: 3.6)
-            NSBezierPath(ovalIn: r).fill()
-        }
-        return true
-    }
-    img.isTemplate = true
-    return img
-}
+/// Красный — идёт запись, синий — Писарь думает. Те же два цвета
+/// у столбиков в плашке возле курсора: строка меню и плашка всегда
+/// говорят об одном и том же.
+let recColor = NSColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 1)
+let busyColor = NSColor.systemBlue
+
+/// Доля высоты у столбиков, пока идёт распознавание, — ровный ряд.
+/// Такой же ряд в это время стоит и в плашке.
+let BUSY_BAR: CGFloat = 0.35
 
 // MARK: - Приложение
 
@@ -181,32 +180,44 @@ final class App: NSObject, NSApplicationDelegate {
         animTimer = nil
         switch s {
         case .idle:
-            statusItem.button?.image = barsImage([5, 9, 13, 9, 5], red: false)
+            statusItem.button?.image = barsImage([5, 9, 13, 9, 5])
             wave.hide()
         case .rec:
-            // Анимация виртуальная: нажал — сразу пошла. Стиль — эквалайзер:
-            // столбики прыгают независимо. От настоящей громкости отказались:
-            // у измерителя Apple инерция, и честная волна выглядела вялой.
-            statusItem.button?.image = barsImage([6, 11, 14, 11, 6], red: true)
+            // Столбики показывают настоящую громкость с микрофона: молчишь —
+            // лежат, говоришь — пляшут. Волну у курсора и иконку в строке меню
+            // кормит один таймер одними и теми же числами, поэтому они всегда
+            // об одном и том же звуке.
+            statusItem.button?.image = barsImage([3, 3, 3, 3, 3], color: recColor)
             var tick = 0
-            animTimer = Timer.scheduledTimer(withTimeInterval: 0.09, repeats: true) { [weak self] _ in
+            // 60 кадров в секунду: микрофон приносит громкость раз в ~85 мс,
+            // промежуточные кадры доводят столбики до неё плавно. На 20
+            // кадрах движение читалось рывками — «низкий fps».
+            let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
                 guard let self else { return }
-                let h = (0..<5).map { _ in CGFloat.random(in: 3...14) }
-                self.statusItem.button?.image = barsImage(h, red: true)
-                self.wave.tick()
+                self.wave.tick(level: CGFloat(self.mic.level))
+                tick += 1
+                // Иконке в строке меню хватает и 20 кадров: она размером
+                // с ноготь, а каждый кадр там — новая картинка.
+                // столбики 0…1 → высоты иконки: 3 пункта в тишине, 14 на голосе
+                if tick % 3 == 0 {
+                    self.statusItem.button?.image = barsImage(self.wave.bars.map { 3 + 11 * $0 },
+                                                              color: recColor)
+                }
                 // окно с кареткой могли передвинуть прямо во время диктовки —
                 // раз в полсекунды спрашиваем место заново и едем за ним
-                tick += 1
-                if tick % 6 == 0, self.waveEnabled { self.wave.follow(typingAnchorIfKnown()) }
+                if tick % 30 == 0, self.waveEnabled { self.wave.follow(typingAnchorIfKnown()) }
             }
+            // В общих режимах: иначе открытое меню или перетаскивание
+            // плашки останавливает волну до конца жеста.
+            RunLoop.main.add(t, forMode: .common)
+            animTimer = t
         case .busy:
-            wave.busy() // серые столбики: «услышал, распознаю»
-            var tick = 0
-            statusItem.button?.image = dotsImage(1)
-            animTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-                tick += 1
-                self?.statusItem.button?.image = dotsImage(tick % 3 + 1)
-            }
+            wave.busy() // плашка на месте, столбики синие: «услышал, распознаю»
+            // Иконка говорит ровно то же и тем же цветом: раньше тут бежали
+            // точки, и строка меню с плашкой рассказывали разными словами
+            // об одном состоянии.
+            statusItem.button?.image = barsImage(
+                [CGFloat](repeating: 3 + 11 * BUSY_BAR, count: 5), color: busyColor)
         }
     }
 
@@ -894,7 +905,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     func flashError() {
         // короткая красная вспышка иконки вместо алерта
-        statusItem.button?.image = barsImage([13, 4, 13, 4, 13], red: true)
+        statusItem.button?.image = barsImage([13, 4, 13, 4, 13], color: recColor)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             // за эти секунды могла начаться новая запись — её не сбиваем
             guard let self, self.state == .idle else { return }

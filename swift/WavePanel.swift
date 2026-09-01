@@ -3,9 +3,10 @@
 // Волна в строке меню наверху видна плохо, когда экран большой и смотришь
 // на курсор. Эта плашка появляется у текстовой каретки (спрашиваем через
 // Accessibility, разрешение и так есть), а если каретку не отдали —
-// у указателя мыши. Анимация виртуальная, в стиле эквалайзера: она говорит
-// «идёт запись», а не показывает громкость — честная громкость выглядела
-// вялой из-за инерции измерителя Apple.
+// у указателя мыши. Столбики показывают настоящую громкость с микрофона
+// (среднеквадратичную, в децибелах): молчишь — лежат, говоришь — пляшут.
+// Инерцию, из-за которой честная волна раньше выглядела вялой, снимает
+// разная скорость вверх и вниз — см. tick(level:).
 
 import AppKit
 
@@ -180,7 +181,58 @@ func focusedFieldFrame() -> NSRect? {
 
 final class WaveView: NSView {
     var busy = false
-    private var heights: [CGFloat] = [0.4, 0.6, 0.8, 0.6, 0.4]
+
+    /// Сколько столбиков в плашке.
+    static let bars = 13
+
+    /// Высоты столбиков, 0…1. Наружу отданы затем, что этими же числами
+    /// кормится иконка в строке меню: две волны об одном и том же звуке
+    /// и обязаны идти в такт.
+    private(set) var heights = [CGFloat](repeating: 0, count: WaveView.bars)
+
+    /// Сглаженная громкость 0…1 — показываем её, а не сырую: сырая
+    /// дёргается покадрово и читается как рябь.
+    private var level: CGFloat = 0
+
+    /// Своя доля громкости у каждого столбика и своё опоздание в кадрах.
+    /// Перебрасываются РАЗ НА ВСПЛЕСК, а не каждый кадр: покадровый
+    /// рандом читается как дрожь, а разовый — как живой голос, от
+    /// которого столбики дёрнулись вразнобой и снова замерли.
+    private var gain = [CGFloat](repeating: 1, count: WaveView.bars)
+    private var lag = [Int](repeating: 0, count: WaveView.bars)
+
+    /// Кадров с начала всплеска; nil — столбики просто стоят на громкости.
+    private var burst: Int?
+
+    /// Насколько громче должно стать, чтобы это считалось всплеском,
+    /// и на сколько кадров столбики могут разъехаться внутри него
+    /// (9 кадров — это 150 мс).
+    private static let burstTrigger: CGFloat = 0.1
+    private static let burstSpread = 9
+
+    // Кадр — 1/60 секунды, и все доли ниже посчитаны под него. Если
+    // менять частоту таймера в main.swift — пересчитывать и их:
+    // доля за кадр = 1 − (1 − прежняя доля)^(прежняя частота / новая).
+    private static let riseRate: CGFloat = 0.75      // подъём, ~30 мс до цели
+    private static let fallRate: CGFloat = 0.13      // спад на тихой речи, ~120 мс
+    private static let fallLoud: CGFloat = 0.45      // добавка к спаду на полной громкости
+
+    /// Кадров с прошлой пересыпки — по нему громкий голос гонит
+    /// столбики дальше, не дожидаясь нового всплеска.
+    private var sinceRoll = 0
+
+    /// Масштаб появления, 1 — плашка в полный рост. Рисуем от левого
+    /// верхнего угла: там каретка, и плашка будто выпрыгивает из-под неё.
+    var scale: CGFloat = 1
+
+    /// С какой громкости плашка начинает частить.
+    private static let livelyFrom: CGFloat = 0.35
+
+    /// Горка: середина выше краёв, чтобы плашка читалась волной,
+    /// а не забором. Считаем от места столбика в ряду.
+    private static func shape(_ i: Int) -> CGFloat {
+        0.72 + 0.28 * sin(CGFloat.pi * (CGFloat(i) + 0.5) / CGFloat(bars))
+    }
 
     // Перетаскивание ведём сами, без isMovableByWindowBackground:
     // так «пользователь перетащил» — это буквально нажатие мышью
@@ -212,17 +264,75 @@ final class WaveView: NSView {
         dragMouse = nil; dragOrigin = nil; dragged = false
     }
 
-    /// Один в один как иконка в трее: каждый столбик каждый кадр прыгает
-    /// на случайную высоту, без сглаживания. Оба кормит один таймер,
-    /// так что пляшут они синхронно по темпу.
-    func tick() {
-        for i in 0..<heights.count {
-            heights[i] = CGFloat.random(in: 0.2...1.0)
+    /// Кадр волны по свежей громкости с микрофона. Вверх — почти рывком
+    /// (голос должен попадать в столбик в тот же кадр, иначе волна
+    /// плетётся за речью), вниз — медленнее, иначе столбики рушатся
+    /// в паузах между слогами и волна начинает мигать.
+    /// Новая раскладка столбиков. Чем громче голос, тем шире разброс
+    /// высот и тем теснее столбики по времени: на крике они должны
+    /// разлетаться, на тихой речи — вести себя смирно.
+    private func roll() {
+        let низ = 0.75 - 0.55 * level
+        let разброс = max(3, Self.burstSpread - Int(6 * level))
+        for i in 0..<Self.bars {
+            gain[i] = CGFloat.random(in: низ...1.0)
+            lag[i] = Int.random(in: 0...разброс)
         }
+        burst = 0
+        sinceRoll = 0
+    }
+
+    func tick(level target: CGFloat) {
+        let рост = target - level
+        level += рост * (рост > 0 ? Self.riseRate : Self.fallRate)
+        sinceRoll += 1
+
+        // Голос прибавил — всплеск: каждый столбик берёт себе новую долю
+        // громкости и новое опоздание. Пока прошлый всплеск не отыграл,
+        // новый не начинаем, иначе доли перебрасывались бы каждый кадр
+        // и вернулась бы дрожь.
+        if рост > Self.burstTrigger, burst == nil {
+            roll()
+        } else if level > Self.livelyFrom, sinceRoll >= max(4, Int(18 - 15 * level)) {
+            // А пока голос громкий, столбики пересыпаются и сами, без
+            // нового всплеска: на полной громкости раз в 100 мс, у порога
+            // — втрое реже. Честной громкости в этом уже нет, это
+            // украшение: на крике плашка должна выглядеть так же бойко,
+            // как звучит голос, а громкость к тому времени упёрлась
+            // в потолок и сама по себе перестала что-либо показывать.
+            roll()
+        }
+
+        for i in 0..<heights.count {
+            // столбик, чья очередь ещё не подошла, стоит как стоял —
+            // от этого всплеск и выглядит разнобоем, а не общим прыжком
+            if let age = burst, age < lag[i] { continue }
+            let свой = level * Self.shape(i) * gain[i]
+            // Вверх столбик идёт всегда рывком, вниз — тем резче, чем
+            // громче голос: на тихой речи оседает плавно, на громкой
+            // рушится почти мгновенно. Отсюда и размах: на крике столбики
+            // не покачиваются около одной высоты, а рушатся и взлетают.
+            let скорость = свой > heights[i] ? Self.riseRate
+                                             : Self.fallRate + Self.fallLoud * level
+            heights[i] += (свой - heights[i]) * скорость
+        }
+
+        if let age = burst { burst = age < Self.burstSpread ? age + 1 : nil }
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let растёт = scale != 1
+        if растёт {
+            NSGraphicsContext.saveGraphicsState()
+            let t = NSAffineTransform()
+            t.translateX(by: 0, yBy: bounds.height) // якорь — левый верхний угол
+            t.scaleX(by: scale, yBy: scale)
+            t.translateX(by: 0, yBy: -bounds.height)
+            t.concat()
+        }
+        defer { if растёт { NSGraphicsContext.restoreGraphicsState() } }
+
         // светлая плашка: белая, с тонкой окантовкой, чтобы читалась
         // и на белом фоне, и на тёмном
         let pill = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
@@ -234,21 +344,33 @@ final class WaveView: NSView {
         pill.stroke()
 
         let bars = heights.count
-        let barW: CGFloat = 4
-        let gap: CGFloat = 4
+        // 13 столбиков: 2,5 пункта ширины с зазором 1,5, поля по краям
+        // почти по девять. Шире ряд делать некуда — крайний столбик
+        // полез бы за скруглённый торец плашки.
+        let barW: CGFloat = 2.5
+        let gap: CGFloat = 1.5
         let totalW = CGFloat(bars) * barW + CGFloat(bars - 1) * gap
         let x0 = (bounds.width - totalW) / 2
-        let maxH = bounds.height - 8
+        // Полей сверху и снизу — по пункту: столбик на всплеске должен
+        // выстреливать во всю плашку, иначе размах пропадает даром.
+        let maxH = bounds.height - 2
 
         // цвет столбиков выбирается в меню приложения
         let chosen = UserDefaults.standard.string(forKey: "waveColor") ?? "dark"
         let barColor: NSColor = chosen == "green" ? .systemGreen
             : chosen == "red" ? .systemRed
             : .black.withAlphaComponent(0.78)
-        (busy ? NSColor.black.withAlphaComponent(0.25) : barColor).setFill()
+        // Пока Писарь думает, плашка остаётся на месте и синеет: работа
+        // не кончилась, текст сейчас появится — а серые столбики
+        // выглядели так, будто волна умерла.
+        (busy ? busyColor : barColor).setFill()
+        // В покое столбик должен быть кружком, а не лежачим овалом:
+        // нижний предел высоты равен ширине. Вертикальный овал —
+        // это barW * 1.75.
+        let restH = barW
         for i in 0..<bars {
-            let sway = busy ? 0.35 : heights[i]
-            let h = max(3, maxH * sway)
+            let sway = busy ? BUSY_BAR : heights[i]
+            let h = max(restH, maxH * sway)
             let r = NSRect(x: x0 + CGFloat(i) * (barW + gap),
                            y: (bounds.height - h) / 2, width: barW, height: h)
             NSBezierPath(roundedRect: r, xRadius: barW / 2, yRadius: barW / 2).fill()
@@ -328,6 +450,7 @@ final class Toast {
 final class WavePanel {
     private let panel: NSPanel
     private let view = WaveView()
+    private var popTimer: Timer?
 
     /// Куда пользователь перетащил плашку. Пока не таскал — nil,
     /// и плашка ходит за текстовой кареткой.
@@ -347,7 +470,7 @@ final class WavePanel {
     }
 
     init() {
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 78, height: 26),
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 68, height: 26),
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: true)
         panel.level = .statusBar
@@ -381,7 +504,43 @@ final class WavePanel {
         NSLog("Гига волна: показ в \(origin)\(Self.pinned != nil ? " (прибита)" : "")")
         panel.setFrameOrigin(origin)
         panel.orderFrontRegardless()
+        pop()
     }
+
+    /// Появление: плашка за 12 кадров вырастает из левого верхнего угла,
+    /// в конце чуть перелетает свой размер и садится обратно. Само окно
+    /// всё это время стоит на месте в полный рост — растёт только рисунок,
+    /// поэтому ни положение, ни перетаскивание от анимации не зависят.
+    private func pop() {
+        popTimer?.invalidate()
+        let кадров = 12
+        var кадр = 0
+        view.scale = Self.popFrom
+        view.needsDisplay = true
+        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] tm in
+            guard let self else { tm.invalidate(); return }
+            кадр += 1
+            if кадр >= кадров {
+                self.view.scale = 1
+                tm.invalidate()
+                self.popTimer = nil
+            } else {
+                // easeOutBack: к концу перелетает размер примерно на 7%
+                let x = CGFloat(кадр) / CGFloat(кадров) - 1
+                let ход = 1 + (Self.popBack + 1) * x * x * x + Self.popBack * x * x
+                self.view.scale = Self.popFrom + (1 - Self.popFrom) * ход
+            }
+            self.view.needsDisplay = true
+            self.panel.invalidateShadow() // тень должна ужиматься вместе с плашкой
+        }
+        RunLoop.main.add(t, forMode: .common)
+        popTimer = t
+    }
+
+    /// С какого размера начинается появление и насколько сильно
+    /// плашка перелетает свой размер в конце.
+    private static let popFrom: CGFloat = 0.35
+    private static let popBack: CGFloat = 1.2
 
     /// Во время записи: окно с кареткой переехало — плашка следом.
     /// Прибитую не трогаем; когда её тащат мышью — тем более.
@@ -393,12 +552,24 @@ final class WavePanel {
         panel.setFrameOrigin(o)
     }
 
-    func tick() { view.tick() }
+    func tick(level: CGFloat) { view.tick(level: level) }
+
+    /// Столбики для иконки в строке меню: там места на пять, поэтому
+    /// берём каждый третий — иконка живёт тем же звуком, что и плашка.
+    var bars: [CGFloat] {
+        let h = view.heights
+        return (0..<5).map { h[$0 * (h.count - 1) / 4] }
+    }
 
     func busy() {
         view.busy = true
         view.needsDisplay = true
     }
 
-    func hide() { panel.orderOut(nil) }
+    func hide() {
+        popTimer?.invalidate()
+        popTimer = nil
+        view.scale = 1
+        panel.orderOut(nil)
+    }
 }

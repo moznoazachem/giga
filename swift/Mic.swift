@@ -23,6 +23,39 @@ final class Mic {
     private let lock = NSLock()
     private(set) var isRecording = false
 
+    /// Громкость для волны, 0…1. Считается в звуковом потоке, читается
+    /// из главного — живёт под тем же локом, что и куски записи.
+    ///
+    /// Это ПИКОВЫЙ измеритель с удержанием: между двумя взглядами волны
+    /// микрофон может прислать и три куска, и ни одного, и всплеск голоса
+    /// не должен пропасть ни в том, ни в другом случае. Поэтому куски
+    /// копят максимум, а взгляд его забирает и обнуляет копилку.
+    private var levelPeak: Float = 0
+    private var levelSeen = false
+    private var levelHeld: Float = 0
+
+    var level: Float {
+        lock.lock(); defer { lock.unlock() }
+        guard levelSeen else { return levelHeld } // куска ещё не было — держим прошлое
+        levelSeen = false
+        levelHeld = levelPeak
+        levelPeak = 0
+        return levelHeld
+    }
+
+    /// Тишина и полный голос в дБ относительно максимума. Ниже пола
+    /// столбики лежат, выше потолка стоят во весь рост. Меряем пики
+    /// по 10 мс, а не среднее по всему куску, поэтому и края взяты
+    /// по-пиковому: тихая комната живёт около −55 дБ, обычная речь
+    /// даёт пики от −35 до −12.
+    private static let dbFloor: Float = -50
+    private static let dbCeil: Float = -15
+
+    /// Кривая громкости. Ухо слышет тихое лучше, чем показывает линейка:
+    /// без поджатия обычная речь болталась бы в нижней трети столбика,
+    /// и волна казалась вялой. 0.6 поднимает середину, не трогая края.
+    private static let curve: Float = 0.6
+
     init() {
         // Сменился микрофон или его формат (воткнули наушники, виртуалка
         // передёрнула устройство) — старый движок больше не годится,
@@ -64,7 +97,28 @@ final class Mic {
                 let k = Float(каналов)
                 for i in 0..<n { mono[i] /= k }
             }
-            self.lock.lock(); self.chunks.append(mono); self.lock.unlock()
+            // Громкость: не среднее по всему куску, а самое громкое
+            // окно в 10 мс внутри него. Кусок в 4096 отсчётов — это ~85 мс;
+            // среднее по такому сроку размазывает слоги в ровный гул,
+            // и волна получается вялой, хотя голос живой.
+            let окно = max(1, Int(self.nativeRate / 100))
+            var peak: Float = 0
+            var i = 0
+            while i < n {
+                let край = min(i + окно, n)
+                var sum: Float = 0
+                for j in i..<край { sum += mono[j] * mono[j] }
+                peak = max(peak, sqrt(sum / Float(край - i)))
+                i = край
+            }
+            let db = 20 * log10(max(peak, 1e-7))
+            let ровно = min(max((db - Self.dbFloor) / (Self.dbCeil - Self.dbFloor), 0), 1)
+            let level = pow(ровно, Self.curve)
+            self.lock.lock()
+            self.chunks.append(mono)
+            self.levelPeak = max(self.levelPeak, level)
+            self.levelSeen = true
+            self.lock.unlock()
         }
 
         e.prepare()
@@ -88,6 +142,7 @@ final class Mic {
         lock.lock()
         let native = chunks.flatMap { $0 }
         chunks = []
+        levelPeak = 0; levelHeld = 0; levelSeen = false // микрофон закрыт — волне показывать нечего
         lock.unlock()
         return Self.resample(native, from: nativeRate, to: 16000)
     }
