@@ -510,8 +510,9 @@ final class App: NSObject, NSApplicationDelegate {
                     if !silent {
                         let a = NSAlert()
                         a.messageText = L("У тебя последняя версия", "You're up to date")
-                        a.informativeText = L("Версия \(APP_VERSION) — новее на GitHub нет.",
+                        a.informativeText = L("Версия \(APP_VERSION), новее нет.",
                                               "Version \(APP_VERSION) is the latest.")
+                        a.accessoryView = whatsNewView(version: APP_VERSION, notes: WHATS_NEW)
                         a.runModal()
                     }
                     return
@@ -523,8 +524,9 @@ final class App: NSObject, NSApplicationDelegate {
                     UserDefaults.standard.set(latest, forKey: "lastUpdateNotified")
                     let a = NSAlert()
                     a.messageText = L("Вышла версия \(latest)", "Version \(latest) is out")
-                    a.informativeText = L("У тебя \(APP_VERSION). Обновить? Приложение скачает выпуск, проверит подпись, поставит и перезапустится само.",
-                                          "You have \(APP_VERSION). Update? The app will download the release, verify its signature, install it and relaunch itself.")
+                    a.informativeText = L("У тебя \(APP_VERSION). Приложение скачает выпуск, проверит подпись, поставит и перезапустится само.",
+                                          "You have \(APP_VERSION). The app will download the release, verify its signature, install it and relaunch itself.")
+                    a.accessoryView = whatsNewView(version: latest, notes: info?.notes ?? [])
                     a.addButton(withTitle: L("Обновить", "Update"))
                     a.addButton(withTitle: L("Позже", "Later"))
                     if a.runModal() == .alertFirstButtonReturn { self.startSelfUpdate() }

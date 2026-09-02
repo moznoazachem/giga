@@ -23,6 +23,8 @@ private let MANIFESTS = [
 struct UpdateInfo {
     let version: String
     let downloads: [URL]
+    /// Что нового в этой версии, по строкам (из манифеста; может быть пусто).
+    var notes: [String] = []
 }
 
 /// Спрашивает площадки по очереди; nil — не дозвонились ни до одной.
@@ -55,7 +57,7 @@ private func tryManifest(_ i: Int, _ done: @escaping (UpdateInfo?) -> Void) {
         if let host = url.host {
             urls.sort { ($0.host == host ? 0 : 1) < ($1.host == host ? 0 : 1) }
         }
-        done(UpdateInfo(version: version, downloads: urls))
+        done(UpdateInfo(version: version, downloads: urls, notes: parseNotes(json["notes"])))
     }.resume()
 }
 
