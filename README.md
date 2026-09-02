@@ -76,10 +76,9 @@ You can also build a self-contained app with the model embedded:
 ./build.sh --with-model     # ~390 MB, no install.sh needed
 ```
 
-The app is signed with a developer certificate but **not notarized**, so macOS
-blocks the first launch. Fix it once: **System Settings → Privacy & Security**,
-scroll down to the blocked-app message → **Open Anyway**. (The old
-"right-click → Open" trick no longer works on macOS 15+ — Apple removed it.)
+The app is signed with a Developer ID certificate and **notarized by Apple**
+(since 3.3): download, drag to Applications, open. No security warnings,
+no extra steps.
 
 ### First run
 
@@ -244,11 +243,9 @@ open "/Applications/Giga Pisar.app"
 ./build.sh --with-model     # получится около 390 МБ, install.sh не нужен
 ```
 
-Приложение подписано сертификатом разработчика, но **не нотаризовано**, поэтому
-при первом запуске macOS его заблокирует. Лечится один раз:
-**System Settings → Privacy & Security**, пролистать вниз до сообщения о
-заблокированном приложении → **Open Anyway**. (Прежний способ «правый клик → Open»
-на macOS 15 и новее больше не работает — Apple его убрала.)
+Приложение подписано сертификатом Developer ID и **нотаризовано Apple**
+(начиная с 3.3): скачал, перетащил в Программы, открыл. Никаких
+предупреждений безопасности и лишних шагов.
 
 ### Первый запуск
 
