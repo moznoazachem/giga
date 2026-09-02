@@ -375,8 +375,8 @@ final class App: NSObject, NSApplicationDelegate {
             // как звать Писаря: менюшка у курсора или только голосом
             menu.addItem(NSMenuItem.separator())
             let menuMode = mkItem(L("Менюшка после вставки", "Menu after pasting"),
-                                  sub: L("у курсора: 1 мысль · 2 сократить · 3 перевести",
-                                         "at the cursor: 1 compose · 2 shorten · 3 translate"),
+                                  sub: L("у курсора: 1 причесать · 2 сократить · 3 перевести",
+                                         "at the cursor: 1 tidy up · 2 shorten · 3 translate"),
                                   action: #selector(pickChipsMode(_:)))
             menuMode.representedObject = "menu"
             menuMode.state = Brain.shared.chipsEnabled ? .on : .off
