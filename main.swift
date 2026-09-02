@@ -120,6 +120,8 @@ final class App: NSObject, NSApplicationDelegate {
     /// Пока мы сами жмём клавиши (⌘C за пользователя), монитор keyDown
     /// не должен принимать их за «шорткат, отменяем запись».
     var syntheticKeyUntil = Date.distantPast
+    /// Шторка «Поделиться» живёт, пока открыта: иначе её отпустит ARC.
+    var sharePicker: NSSharingServicePicker?
 
 
 
@@ -409,6 +411,10 @@ final class App: NSObject, NSApplicationDelegate {
                             sub: L("сейчас стоит \(APP_VERSION)", "installed: \(APP_VERSION)"),
                             icon: "arrow.triangle.2.circlepath",
                             action: #selector(checkUpdatesManual)))
+        menu.addItem(mkItem(L("Рассказать другу…", "Tell a friend…"),
+                            sub: L("ссылка на сайт: Сообщения, Почта, Telegram, AirDrop",
+                                   "site link via Messages, Mail, Telegram, AirDrop"),
+                            icon: "square.and.arrow.up", action: #selector(shareApp)))
 
         menu.addItem(NSMenuItem.separator())
         let quit = mkItem(L("Выйти", "Quit"))
@@ -426,6 +432,22 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func showOnboarding() { onboarding.show() }
+
+    /// «Рассказать другу»: родная шторка «Поделиться» с готовым текстом и
+    /// ссылкой на сайт. Сайт не меняется от версии к версии, там оба зеркала.
+    static let siteURL = URL(string: "https://gigapisar.github.io")!
+    @objc func shareApp() {
+        let text = L("Гига Писарь: диктовка на маке по правому ⌘, русский распознаёт на ура, всё локально, бесплатно. Скачать: gigapisar.github.io",
+                     "Giga Pisar: hold right ⌘ and dictate on your Mac. Russian and English, fully offline, free. Download: gigapisar.github.io")
+        let picker = NSSharingServicePicker(items: [text, App.siteURL])
+        sharePicker = picker
+        NSApp.activate(ignoringOtherApps: true)
+        // меню ещё закрывается — даём ему секунду-другую кадров
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, let button = self.statusItem.button else { return }
+            picker.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
 
     @objc func toggleWave() {
         UserDefaults.standard.set(!waveEnabled, forKey: "wavePanel")
