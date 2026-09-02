@@ -126,10 +126,15 @@ on-device, like everything else:
 
 - **By voice**: end the dictation with a plain-language command —
   *"Писарь, исправь"* (clean it up), *"Писарь, переведи на английский"*,
-  *"Гига Писарь, собери в чёткую мысль"* — and the processed text is inserted
+  *"Гига Писарь, причеши"* — and the processed text is inserted
   instead of the raw one
+- **Over selected text**: select any text in any app, hold the dictation
+  key and say what to do with it — *"translate to English"*, *"fix the
+  typos"*, *"make it shorter"*. The result replaces the selection right
+  in place; ⌘Z brings the original back. Not in terminals (there is no
+  editable selection there)
 - **By menu**: after a raw paste a small menu pops up at the cursor
-  (1 compose the thought · 2 shorten · 3 translate) — pick with a digit,
+  (1 tidy up · 2 shorten · 3 translate) — pick with a digit,
   arrows or the mouse; the text is replaced right in the field, with
   "put it back" one keypress away. In terminals the menu wears a terminal
   skin and replaces text via backspaces (no ⌘Z there)
@@ -293,10 +298,15 @@ tccutil reset Accessibility ru.panda.giga
 
 - **Голосом**: закончи диктовку командой обычными словами —
   *«Писарь, исправь»*, *«Писарь, переведи на английский»*,
-  *«Гига Писарь, собери в чёткую мысль»* — и вставится уже обработанный
+  *«Гига Писарь, причеши»* — и вставится уже обработанный
   текст вместо сырого
+- **Над выделенным текстом**: выдели любой текст в любом приложении, зажми
+  клавишу диктовки и скажи, что с ним сделать: *«переведи на английский»*,
+  *«исправь ошибки»*, *«сделай короче»*. Результат встанет на место
+  выделенного, ⌘Z вернёт как было. В терминалах не работает (там нет
+  редактируемого выделения)
 - **Менюшкой**: после вставки у курсора всплывает меню
-  (1 собрать мысль · 2 сократить · 3 перевести) — выбирай цифрой, стрелками
+  (1 причесать · 2 сократить · 3 перевести) — выбирай цифрой, стрелками
   или мышью; текст подменяется прямо в поле, рядом «вернуть как было».
   В терминалах меню одевается в терминальный костюм, а подмена идёт
   через Backspace (⌘Z там не живёт)
