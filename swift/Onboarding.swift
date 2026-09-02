@@ -14,8 +14,8 @@ final class Onboarding: NSObject {
     private var timer: Timer?
     private var header: NSTextField?
     private var marks: [NSTextField] = []
-    private var buttons: [NSButton] = []
-    private var asked = [false, false]   // уже дёргали системный запрос?
+    private var allowButton: NSButton?
+    private var axAsked = false          // системный запрос AX уже дёргали?
 
     private let checks: [() -> Bool] = [
         { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized },
@@ -62,32 +62,37 @@ final class Onboarding: NSObject {
               "macOS will ask for each one — flip the “Giga Pisar” toggle in its dialog.\nThe checkmarks below update on their own."),
             size: 12, bold: false))
 
-        for (i, (name, why)) in rows.enumerated() {
+        for (name, why) in rows {
             let mark = label("○", size: 15, bold: true)
             mark.textColor = .tertiaryLabelColor
             marks.append(mark)
 
             let text = label("\(name) — \(why)", size: 13, bold: false)
 
-            let b = NSButton(title: L("Разрешить", "Allow"), target: self,
-                             action: #selector(allow(_:)))
-            b.tag = i
-            b.bezelStyle = .rounded
-            buttons.append(b)
-
-            let row = NSStackView(views: [mark, text, NSView(), b])
+            let row = NSStackView(views: [mark, text])
             row.orientation = .horizontal
             row.spacing = 8
-            row.translatesAutoresizingMaskIntoConstraints = false
             stack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48).isActive = true
         }
+
+        // Одна кнопка на всё: жмёшь — разрешения спрашиваются по очереди
+        // сами. Раньше у каждой строки была своя кнопка плюс «Закрыть»
+        // внизу — три кнопки конфузили, люди жали одну и бросали.
+        let allow = NSButton(title: L("Разрешить всё", "Allow everything"),
+                             target: self, action: #selector(allowAll))
+        allow.bezelStyle = .rounded
+        allow.keyEquivalent = "\r"
+        allow.controlSize = .large
+        allowButton = allow
 
         let close = NSButton(title: L("Закрыть", "Close"), target: self,
                              action: #selector(closeWindow))
         close.bezelStyle = .rounded
-        close.keyEquivalent = "\r"
-        stack.addArrangedSubview(close)
+
+        let btnRow = NSStackView(views: [allow, close])
+        btnRow.orientation = .horizontal
+        btnRow.spacing = 10
+        stack.addArrangedSubview(btnRow)
 
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 260),
                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -114,28 +119,38 @@ final class Onboarding: NSObject {
             let ok = check()
             marks[i].stringValue = ok ? "✓" : "○"
             marks[i].textColor = ok ? .systemGreen : .tertiaryLabelColor
-            buttons[i].isHidden = ok
         }
+        allowButton?.isHidden = Self.allGranted
         header?.stringValue = Self.allGranted
             ? L("Всё готово — зажми правый ⌘ и говори", "All set — hold right ⌘ and speak")
             : L("Два разрешения — и можно диктовать", "Two permissions and you're set")
         if Self.allGranted { timer?.invalidate() }
     }
 
-    /// Первый клик — системный запрос; повторный (если окно запроса закрыли
-    /// или доступ уже отклоняли) — сразу нужный раздел настроек.
-    @objc private func allow(_ sender: NSButton) {
-        let again = asked[sender.tag]
-        asked[sender.tag] = true
-        if sender.tag == 0 {
-            if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-                AVCaptureDevice.requestAccess(for: .audio) { _ in }
-            } else { openPane("Privacy_Microphone") }
-        } else {
-            if again { openPane("Privacy_Accessibility") } else {
-                _ = AXIsProcessTrustedWithOptions(
-                    ["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    /// Одна кнопка — оба разрешения, по очереди: сначала микрофон
+    /// (системный запрос), после ответа — универсальный доступ. Если
+    /// какой-то запрос система уже показывала и его закрыли — вместо
+    /// повторного запроса открывается нужный раздел настроек.
+    @objc private func allowAll() {
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        if micStatus == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
+                DispatchQueue.main.async { self?.askAccessibility() }
             }
+            return
+        }
+        if micStatus != .authorized { openPane("Privacy_Microphone") }
+        askAccessibility()
+    }
+
+    private func askAccessibility() {
+        guard !AXIsProcessTrusted() else { return }
+        if axAsked {
+            openPane("Privacy_Accessibility")
+        } else {
+            axAsked = true
+            _ = AXIsProcessTrustedWithOptions(
+                ["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         }
     }
 

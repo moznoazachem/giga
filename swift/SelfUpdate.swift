@@ -191,7 +191,13 @@ enum SelfUpdate {
         guard signatureIntact(newApp) else {
             bail(L("подпись обновления повреждена", "the update's signature is broken")); return
         }
-        guard let newTeam = teamID(of: newApp), newTeam == teamID(of: dest) else {
+        // Наша официальная команда подписи (Developer ID, сертификат 2026
+        // года). Обновление принимается, если подписано ЛИБО той же командой,
+        // что работающая копия, ЛИБО официальной — это пропускает переход
+        // со старой самодельной подписи на нотаризованную.
+        let officialTeam = "CQD93BKAH3"
+        guard let newTeam = teamID(of: newApp),
+              newTeam == teamID(of: dest) || newTeam == officialTeam else {
             bail(L("обновление подписано не нами", "the update is signed by someone else")); return
         }
         guard Bundle(path: newApp)?.bundleIdentifier == Bundle.main.bundleIdentifier else {

@@ -82,20 +82,31 @@ fi
 mkdir -p "$APP/Contents/Frameworks/llama"
 cp -a "$LLAMA_DIR/llama-server" "$LLAMA_DIR"/lib*.dylib "$APP/Contents/Frameworks/llama/"
 
-# Подпись стабильным сертификатом: разрешения (микрофон, мониторинг ввода)
-# переживают пересборки. Приоритет: Apple Development → Giga Dev → ad-hoc.
-if security find-identity -p codesigning -v | grep -q "Apple Development"; then
+# Подпись. Приоритет: Developer ID (настоящий сертификат раздачи, с ним
+# работает нотаризация) → Apple Development → Giga Dev → ad-hoc.
+# С Developer ID подписываем в строгой среде (hardened runtime) с меткой
+# времени — это требования нотаризации Apple.
+if [ -n "${SIGN_AS:-}" ]; then
+    SIGN_ID="$SIGN_AS"
+    SIGN_FLAGS=()
+elif security find-identity -p codesigning -v | grep -q "Developer ID Application"; then
+    SIGN_ID="Developer ID Application"
+    SIGN_FLAGS=(--options runtime --timestamp)
+elif security find-identity -p codesigning -v | grep -q "Apple Development"; then
     SIGN_ID="Apple Development"
+    SIGN_FLAGS=()
 elif security find-identity -p codesigning -v | grep -q "Giga Dev"; then
     SIGN_ID="Giga Dev"
+    SIGN_FLAGS=()
 else
     SIGN_ID="-"
+    SIGN_FLAGS=()
 fi
-echo "── подпись: $SIGN_ID"
-codesign --force --sign "$SIGN_ID" "$APP/Contents/Frameworks/libonnxruntime.$ORT_VER.dylib"
+echo "── подпись: $SIGN_ID ${SIGN_FLAGS[*]:-}"
+codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" "$APP/Contents/Frameworks/libonnxruntime.$ORT_VER.dylib"
 find "$APP/Contents/Frameworks/llama" -type f \( -name "*.dylib" -o -name "llama-server" \) \
-    -exec codesign --force --sign "$SIGN_ID" {} \;
-codesign --force --sign "$SIGN_ID" "$APP"
+    -exec codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" {} \;
+codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" --entitlements entitlements.plist "$APP"
 
 # Установка в «Программы»: там приложение видно в Finder и Spotlight.
 DEST="/Applications/Giga Pisar.app"
