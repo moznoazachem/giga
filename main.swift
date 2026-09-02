@@ -114,6 +114,12 @@ final class App: NSObject, NSApplicationDelegate {
 
     /// Последняя удачная диктовка — страховка на случай «курсор был не в поле».
     var lastText: String?
+    /// Текст, который был выделен в момент нажатия рации. Если он есть и
+    /// мозг включён, речь считается командой над ним, а не диктовкой.
+    var selectionAtStart: String?
+    /// Пока мы сами жмём клавиши (⌘C за пользователя), монитор keyDown
+    /// не должен принимать их за «шорткат, отменяем запись».
+    var syntheticKeyUntil = Date.distantPast
 
 
 
@@ -752,7 +758,7 @@ final class App: NSObject, NSApplicationDelegate {
         // с разрешением «Универсальный доступ» (оно и так нужно для вставки);
         // пока его нет, просто не работает эта мелочь, а диктовка работает.
         NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
-            guard let self, self.rightCmdDown else { return }
+            guard let self, self.rightCmdDown, Date() > self.syntheticKeyUntil else { return }
             self.stopRecording(abort: true)
         }
     }
@@ -807,6 +813,89 @@ final class App: NSObject, NSApplicationDelegate {
         cancelled = false
         setState(.rec)
         if waveEnabled { wave.show(near: typingAnchor()) }
+        captureSelection()
+    }
+
+    /// Что выделено в момент нажатия рации. Только при включённом мозге
+    /// и не в терминале (там выделения через Accessibility нет).
+    func captureSelection() {
+        selectionAtStart = nil
+        guard !frontIsTerminal, Brain.shared.ready, Brain.shared.engineAvailable else { return }
+        let (text, length) = selectedTextViaAX()
+        if let text {
+            selectionAtStart = text
+            NSLog("Гига выделение: AX, \(text.count) знаков")
+            hintSelection(text.count)
+            return
+        }
+        // Диапазон выделен, а сам текст приложение не отдаёт (Chrome,
+        // Electron). Берём через ⌘C за пользователя, буфер возвращаем
+        // как был: момент наш, никакой гонки с чужой вставкой тут нет.
+        guard length > 0, AXIsProcessTrusted() else { return }
+        let pb = NSPasteboard.general
+        let before = pb.changeCount
+        let snapshot: [NSPasteboardItem] = (pb.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for t in item.types { if let d = item.data(forType: t) { copy.setData(d, forType: t) } }
+            return copy
+        }
+        syntheticKeyUntil = Date().addingTimeInterval(0.4)
+        pressKey(8, .maskCommand) // ⌘C
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
+            guard pb.changeCount != before else {
+                NSLog("Гига выделение: ⌘C ничего не дал")
+                return
+            }
+            if let s = pb.string(forType: .string),
+               !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.selectionAtStart = s
+                NSLog("Гига выделение: через ⌘C, \(s.count) знаков")
+                self.hintSelection(s.count)
+            }
+            pb.clearContents()
+            if !snapshot.isEmpty { pb.writeObjects(snapshot) }
+        }
+    }
+
+    func hintSelection(_ n: Int) {
+        Toast.shared.show(L("Выделено \(n) знаков. Скажи, что с ними сделать",
+                            "\(n) characters selected. Say what to do with them"), seconds: 2.5)
+    }
+
+    /// Речь как команда над выделенным текстом: результат встаёт поверх
+    /// выделения, редактор сам его заменяет. Возвращает false, если это
+    /// обычная диктовка.
+    func runSelectionCommand(_ speech: String) -> Bool {
+        guard let sel = selectionAtStart else { return false }
+        selectionAtStart = nil
+        let cmd = Brain.stripAddress(speech)
+        guard !cmd.isEmpty, Brain.shared.ready, Brain.shared.engineAvailable else { return false }
+        NSLog("Гига выделение: команда «\(cmd)» над \(sel.count) знаками")
+        Brain.shared.transform(sel, command: cmd, mode: .selection) { [weak self] out in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.setState(.idle)
+                guard let out else {
+                    Toast.shared.show(L("Писарь не справился. Выделенное не тронул",
+                                        "Pisar could not do it. The selection is untouched"))
+                    return
+                }
+                self.paste(out)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    if Brain.shared.chipsEnabled {
+                        let p = typingAnchorIfKnown() ?? NSEvent.mouseLocation
+                        Chips.shared.showRevert(near: p, terminal: false) { [weak self] in
+                            // ⌘Z откатывает вставку, редактор сам возвращает выделенное
+                            self?.undoInsert(chars: out.count)
+                        }
+                    } else {
+                        Toast.shared.show(L("Готово. Вернуть как было: ⌘Z", "Done. Undo with ⌘Z"))
+                    }
+                }
+            }
+        }
+        return true
     }
 
     func stopRecording(abort: Bool) {
@@ -865,6 +954,8 @@ final class App: NSObject, NSApplicationDelegate {
                     self.flashError()
                     return
                 }
+                // Было выделение при нажатии рации? Тогда это команда над ним.
+                if self.runSelectionCommand(текст) { return }
                 // Сразу в буфер: что бы дальше ни случилось (мозг завис,
                 // вставка не прошла, приложение перезапустили) — наговоренное
                 // уже не потеряется, его можно вставить самому через ⌘V.

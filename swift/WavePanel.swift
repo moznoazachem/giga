@@ -105,6 +105,22 @@ private func axBounds(_ el: AXUIElement, _ range: CFRange) -> NSRect? {
 
 /// Есть ли сейчас фокус в текстовом поле (даже если оно скрывает,
 /// ГДЕ каретка): по этому решаем, вставится ли ⌘V.
+/// Текст, выделенный в фокусном поле. nil — выделения нет (или приложение
+/// его не отдаёт: Chrome и Electron через раз, терминалы никогда).
+/// Сначала спрашиваем сам текст (AXSelectedText); если его нет, но диапазон
+/// выделения непустой, вызывающий может добыть текст через ⌘C.
+func selectedTextViaAX() -> (text: String?, length: Int) {
+    guard let el = axFocusedElement(), let sel = axSelectedRange(el), sel.length > 0
+    else { return (nil, 0) }
+    var ref: CFTypeRef?
+    if AXUIElementCopyAttributeValue(el, "AXSelectedText" as CFString, &ref) == .success,
+       let s = ref as? String,
+       !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return (s, Int(sel.length))
+    }
+    return (nil, Int(sel.length))
+}
+
 func hasTextFocus() -> Bool {
     guard let el = axFocusedElement() else { return false }
     return axSelectedRange(el) != nil

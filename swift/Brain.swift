@@ -260,7 +260,33 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
         return (body, command)
     }
 
+    /// Обращение «Писарь,» в начале голосовой команды над выделением —
+    /// необязательное, но если сказано, в команду не попадает.
+    static func stripAddress(_ text: String) -> String {
+        let pat = "^\\s*(?:гига[\\s,—-]+)?п[еиэ]сар[ьяюе]?\\b[\\s,.:!—-]*"
+        guard let re = try? NSRegularExpression(pattern: pat, options: [.caseInsensitive])
+        else { return text }
+        let ns = text as NSString
+        let out = re.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: ns.length),
+                                              withTemplate: "")
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: сама работа
+
+    /// Что за текст правим: наговоренный (убираем оговорки и паразиты)
+    /// или выделенный человеком в документе (уже написанный, трогаем
+    /// только то, что просит команда).
+    enum Mode { case dictation, selection }
+
+    private static let selectionPrompt = """
+    Ты редактируешь текст, который пользователь выделил в своём документе, \
+    и выполняешь над ним команду пользователя. Сохраняй смысл, тон и \
+    разбиение на абзацы, ничего не добавляй от себя и не комментируй. \
+    Команда дана в конце этой инструкции, в сам текст не входит, и \
+    упоминать её в ответе нельзя. Верни ТОЛЬКО готовый текст, без кавычек \
+    вокруг него.
+    """
 
     private static let systemPrompt = """
     Ты обрабатываешь надиктованный голосом текст перед вставкой. Правила: \
@@ -281,10 +307,13 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
         if c.contains("перевед") || c.contains("англ") { return L("Перевожу…", "Translating…") }
         if c.contains("сократ") || c.contains("короче") { return L("Сокращаю…", "Shortening…") }
         if c.contains("мысль") { return L("Собираю мысль…", "Composing…") }
+        if c.contains("сглад") || c.contains("мягче") { return L("Сглаживаю…", "Smoothing…") }
+        if c.contains("исправ") || c.contains("ошибк") { return L("Исправляю…", "Fixing…") }
         return L("Причёсываю…", "Polishing…")
     }
 
-    func transform(_ body: String, command: String, done: @escaping (String?) -> Void) {
+    func transform(_ body: String, command: String, mode: Mode = .dictation,
+                   done: @escaping (String?) -> Void) {
         // холодный старт — нейронку ещё надо поднять с диска (~10 секунд),
         // человек должен видеть, что происходит, а не гадать
         let cold = server?.isRunning != true || serverModelId != chosenId
@@ -304,7 +333,7 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
             if cold {
                 DispatchQueue.main.async { Toast.shared.showSticky(action) }
             }
-            self?.chat(body: body, command: command, done: finish)
+            self?.chat(body: body, command: command, mode: mode, done: finish)
         }
     }
 
@@ -326,13 +355,14 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
         }.resume()
     }
 
-    private func chat(body: String, command: String, done: @escaping (String?) -> Void) {
+    private func chat(body: String, command: String, mode: Mode, done: @escaping (String?) -> Void) {
         // Команда уходит в системную инструкцию, а тексту — отдельное
         // сообщение целиком. Раньше команда подклеивалась к тексту строкой
         // «Команда: …», и нейронка иногда обрабатывала её как часть текста
         // (перевела на английский вместе с текстом — «Command: …»).
         let messages: [[String: String]] = [
-            ["role": "system", "content": Self.systemPrompt + "\n\nКоманда пользователя к тексту: \(command)."],
+            ["role": "system", "content": (mode == .selection ? Self.selectionPrompt : Self.systemPrompt)
+                + "\n\nКоманда пользователя к тексту: \(command)."],
             ["role": "user", "content": body],
         ]
         let payload: [String: Any] = ["messages": messages,

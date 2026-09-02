@@ -26,8 +26,8 @@ final class Chips {
         let command: String
     }
     static var all: [Chip] {
-        [Chip(title: L("Собрать в чёткую мысль", "Compose the thought"),
-              command: "собери это в чёткую, ясно скомпонованную мысль"),
+        [Chip(title: L("Причесать", "Tidy up"),
+              command: "причеши текст: убери слова-паразиты и повторы, поправь пунктуацию и очевидные ошибки; смысл, порядок мыслей и лексику не меняй"),
          Chip(title: L("Сократить", "Make it shorter"), command: "сократи, сохранив суть"),
          Chip(title: L("Перевести на английский", "Translate to English"),
               command: "переведи на английский")]
