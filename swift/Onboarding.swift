@@ -44,7 +44,7 @@ final class Onboarding: NSObject {
             (L("Микрофон", "Microphone"),
              L("записывать голос", "to record your voice")),
             (L("Универсальный доступ", "Accessibility"),
-             L("вставлять текст — нажимать ⌘V за тебя", "to insert text — pressing ⌘V for you")),
+             L("вставлять текст (жать ⌘V за тебя)", "to insert text (pressing ⌘V for you)")),
         ]
 
         let stack = NSStackView()
@@ -53,13 +53,13 @@ final class Onboarding: NSObject {
         stack.spacing = 14
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
 
-        let h = label(L("Два разрешения — и можно диктовать",
+        let h = label(L("Два разрешения, и можно диктовать",
                         "Two permissions and you're set"), size: 16, bold: true)
         header = h
         stack.addArrangedSubview(h)
         stack.addArrangedSubview(label(
-            L("Каждое спросит система — включи в её окне тумблер «Giga Pisar».\nГалочки ниже загорятся сами.",
-              "macOS will ask for each one — flip the “Giga Pisar” toggle in its dialog.\nThe checkmarks below update on their own."),
+            L("Каждое спросит система: включи в её окне тумблер «Giga Pisar».\nГалочки ниже загорятся сами.",
+              "macOS will ask for each one: flip the “Giga Pisar” toggle in its dialog.\nThe checkmarks below update on their own."),
             size: 12, bold: false))
 
         for (name, why) in rows {
@@ -67,7 +67,7 @@ final class Onboarding: NSObject {
             mark.textColor = .tertiaryLabelColor
             marks.append(mark)
 
-            let text = label("\(name) — \(why)", size: 13, bold: false)
+            let text = label("\(name): \(why)", size: 13, bold: false)
 
             let row = NSStackView(views: [mark, text])
             row.orientation = .horizontal
@@ -93,6 +93,9 @@ final class Onboarding: NSObject {
         btnRow.orientation = .horizontal
         btnRow.spacing = 10
         stack.addArrangedSubview(btnRow)
+        stack.setCustomSpacing(22, after: stack.arrangedSubviews[stack.arrangedSubviews.count - 2])
+        btnRow.translatesAutoresizingMaskIntoConstraints = false
+        btnRow.centerXAnchor.constraint(equalTo: stack.centerXAnchor).isActive = true
 
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 260),
                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -122,8 +125,8 @@ final class Onboarding: NSObject {
         }
         allowButton?.isHidden = Self.allGranted
         header?.stringValue = Self.allGranted
-            ? L("Всё готово — зажми правый ⌘ и говори", "All set — hold right ⌘ and speak")
-            : L("Два разрешения — и можно диктовать", "Two permissions and you're set")
+            ? L("Всё готово: зажми правый ⌘ и говори", "All set: hold right ⌘ and speak")
+            : L("Два разрешения, и можно диктовать", "Two permissions and you're set")
         if Self.allGranted { timer?.invalidate() }
     }
 
