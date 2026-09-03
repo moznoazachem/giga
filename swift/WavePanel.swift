@@ -126,6 +126,26 @@ func hasTextFocus() -> Bool {
     return axSelectedRange(el) != nil
 }
 
+/// Номер символа, перед которым стоит каретка. По нему видно, подействовала
+/// ли вставка: после ⌘V каретка обязана уехать вперёд. nil — приложение
+/// не отдаёт положение, и судить не по чему.
+func caretIndex() -> Int? {
+    guard let el = axFocusedElement(), let r = axSelectedRange(el) else { return nil }
+    return r.location
+}
+
+/// Сколько символов в фокусном поле. Второй свидетель вставки — на случай,
+/// когда каретку приложение показывает, а двигать её забывает.
+func focusedTextLength() -> Int? {
+    guard let el = axFocusedElement() else { return nil }
+    var ref: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(el, "AXNumberOfCharacters" as CFString,
+                                        &ref) == .success,
+          let n = ref as? Int
+    else { return nil }
+    return n
+}
+
 /// Точка текстовой каретки (низ) в кокоа-координатах, если приложение
 /// отдаёт её честно. Пустое выделение часто отдаёт мусорные границы —
 /// тогда спрашиваем про соседний символ и берём его КРАЙ, обращённый

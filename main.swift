@@ -114,6 +114,44 @@ final class App: NSObject, NSApplicationDelegate {
 
     /// Последняя удачная диктовка — страховка на случай «курсор был не в поле».
     var lastText: String?
+
+    /// Что лежало в буфере до диктовки. Вставлять можно только через буфер
+    /// (иначе ⌘V не нажать), но забирать его насовсем — невежливо: как только
+    /// текст встал в поле, возвращаем человеку то, что он копировал сам.
+    private var clipboardBefore: [NSPasteboardItem]?
+
+    /// Счётчик изменений буфера сразу после того, как мы положили туда своё.
+    /// По нему видно, не копировал ли человек что-то ещё, пока шла вставка.
+    private var clipboardMark = 0
+
+    /// Сколько ждать перед возвратом буфера. Приложение читает буфер, разбирая
+    /// наше ⌘V, и если вернуть прежнее слишком рано, вставится оно.
+    static let clipboardHold: TimeInterval = 0.5
+
+    /// Запомнить буфер перед тем, как класть в него диктовку. Второй раз
+    /// за заход не перезапоминаем: беречь надо самое первое, пользовательское.
+    func stashClipboard() {
+        guard clipboardBefore == nil else { return }
+        clipboardBefore = (NSPasteboard.general.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for t in item.types { if let d = item.data(forType: t) { copy.setData(d, forType: t) } }
+            return copy
+        }
+    }
+
+    /// Вернуть буфер как был — но только если в нём всё ещё наша диктовка:
+    /// человек мог за эти полсекунды скопировать что-то своё.
+    func restoreClipboard() {
+        guard let items = clipboardBefore else { return }
+        clipboardBefore = nil
+        let pb = NSPasteboard.general
+        guard pb.changeCount == clipboardMark else { return }
+        pb.clearContents()
+        if !items.isEmpty { pb.writeObjects(items) }
+    }
+
+    /// Вставить не вышло — диктовка остаётся в буфере, прежнее забываем.
+    func keepClipboard() { clipboardBefore = nil }
     /// Текст, который был выделен в момент нажатия рации. Если он есть и
     /// мозг включён, речь считается командой над ним, а не диктовкой.
     var selectionAtStart: String?
@@ -1014,8 +1052,10 @@ final class App: NSObject, NSApplicationDelegate {
                 // вставка не прошла, приложение перезапустили) — наговоренное
                 // уже не потеряется, его можно вставить самому через ⌘V.
                 let pb = NSPasteboard.general
+                self.stashClipboard()
                 pb.clearContents()
                 pb.setString(text, forType: .string)
+                self.clipboardMark = pb.changeCount
                 // Обращение «Писарь, …» в конце? Сперва текст идёт в мозг.
                 if let (body, cmd) = Brain.parseCommand(text) {
                     guard Brain.shared.ready, Brain.shared.engineAvailable else {
@@ -1149,11 +1189,15 @@ final class App: NSObject, NSApplicationDelegate {
     func paste(_ text: String, offerChips: Bool = false) {
         lastText = text
 
-        // Вставляем через буфер (быстро и надёжно). Диктовка в буфере
-        // и остаётся: захотел вставить ещё раз в другом месте — просто ⌘V.
+        // Вставляем через буфер (быстро и надёжно), но берём его взаймы:
+        // прежнее содержимое запоминаем и вернём, как только текст встанет
+        // в поле. Если вставить не выйдет — диктовка в буфере и останется,
+        // чтобы её можно было вставить самому.
         let pb = NSPasteboard.general
+        stashClipboard()
         pb.clearContents()
         pb.setString(text, forType: .string)
+        clipboardMark = pb.changeCount
 
         // Есть ли куда вставлять? Спрашиваем про сам фокус в текстовом поле,
         // а не про координаты каретки: терминалы и Electron часто скрывают,
@@ -1171,10 +1215,32 @@ final class App: NSObject, NSApplicationDelegate {
             a.informativeText = L("Текст уже в буфере — вставь его сам через ⌘V.\nВ появившемся системном окне нажми «Open System Settings» и включи «Giga Pisar» в списке Accessibility.",
                                   "The text is already on the clipboard — paste it with ⌘V.\nIn the system dialog, click “Open System Settings” and turn on “Giga Pisar” under Accessibility.")
             a.runModal()
+            keepClipboard() // вставить нечем — диктовка остаётся в буфере
             return
         }
+        // Снимок поля до вставки: по нему потом решим, состоялась ли она.
+        let caretBefore = caretIndex()
+        let lengthBefore = focusedTextLength()
         pressKey(9, .maskCommand) // ⌘V
         if inField {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.clipboardHold) { [weak self] in
+                guard let self else { return }
+                // Текст действительно встал в поле? Каретка должна была уехать
+                // вперёд или в поле прибавиться символов. Если убедиться не
+                // удалось — буфер не возвращаем: пусть лучше пропадёт чужая
+                // копия, чем наговорённое, которое больше взять неоткуда.
+                let вперёд = { (b: Int?, a: Int?) in
+                    if let b, let a { return a > b } else { return false }
+                }
+                if вперёд(caretBefore, caretIndex()) || вперёд(lengthBefore, focusedTextLength()) {
+                    self.restoreClipboard()
+                } else {
+                    NSLog("Гига вставка: подтверждения нет — диктовку оставляю в буфере")
+                    self.keepClipboard()
+                    Toast.shared.show(L("Вставка не прошла — диктовка в буфере, нажми ⌘V",
+                                        "The paste didn't land — your dictation is on the clipboard, press ⌘V"))
+                }
+            }
             // Менюшка: сырой текст вставлен, предложить причесать.
             if offerChips, Brain.shared.ready, Brain.shared.chipsEnabled {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
@@ -1182,6 +1248,7 @@ final class App: NSObject, NSApplicationDelegate {
                 }
             }
         } else {
+            keepClipboard() // поля не было — диктовка нужна в буфере
             Toast.shared.show(L("Курсор был не в тексте — диктовка в буфере, нажми ⌘V",
                                 "The cursor wasn't in a text field — your dictation is on the clipboard, press ⌘V"))
         }
