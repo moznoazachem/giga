@@ -103,8 +103,6 @@ private func axBounds(_ el: AXUIElement, _ range: CFRange) -> NSRect? {
     return out
 }
 
-/// Есть ли сейчас фокус в текстовом поле (даже если оно скрывает,
-/// ГДЕ каретка): по этому решаем, вставится ли ⌘V.
 /// Текст, выделенный в фокусном поле. nil — выделения нет (или приложение
 /// его не отдаёт: Chrome и Electron через раз, терминалы никогда).
 /// Сначала спрашиваем сам текст (AXSelectedText); если его нет, но диапазон
@@ -121,30 +119,55 @@ func selectedTextViaAX() -> (text: String?, length: Int) {
     return (nil, Int(sel.length))
 }
 
-func hasTextFocus() -> Bool {
-    guard let el = axFocusedElement() else { return false }
-    return axSelectedRange(el) != nil
-}
+/// Что известно про фокус: поле есть, поля нет — или приложение молчит.
+/// Молчание не значит «нет»: Chromium и всё, что на нём (Electron, Cursor,
+/// VS Code), строит дерево доступности лениво и до первого запроса не отдаёт
+/// даже фокусный элемент. Принимать это за «курсор не в тексте» — значит
+/// ругаться на удавшуюся вставку.
+enum TextFocus { case field, notField, unknown }
 
-/// Номер символа, перед которым стоит каретка. По нему видно, подействовала
-/// ли вставка: после ⌘V каретка обязана уехать вперёд. nil — приложение
-/// не отдаёт положение, и судить не по чему.
-func caretIndex() -> Int? {
-    guard let el = axFocusedElement(), let r = axSelectedRange(el) else { return nil }
-    return r.location
-}
+/// Роли, в которые ⌘V попадёт. Одного диапазона выделения мало: Finder,
+/// когда курсор нигде не стоит, отдаёт AXGroup, и диапазон у него тоже есть —
+/// по нему мы принимали рабочий стол за текстовое поле.
+private let textRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox",
+                                      "AXSecureTextField", "AXSearchField"]
 
-/// Сколько символов в фокусном поле. Второй свидетель вставки — на случай,
-/// когда каретку приложение показывает, а двигать её забывает.
-func focusedTextLength() -> Int? {
-    guard let el = axFocusedElement() else { return nil }
+func textFocus() -> TextFocus {
+    guard let el = axFocusedElement() else {
+        // Молчит. Первое молчание от этого приложения — повод разбудить
+        // дерево и поверить на слово: скорее всего это Chromium, который
+        // ещё не проснулся. Молчит и после побудки — значит фокуса
+        // действительно нет.
+        return wakeAccessibility() ? .unknown : .notField
+    }
+    guard axSelectedRange(el) != nil else { return .notField }
     var ref: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(el, "AXNumberOfCharacters" as CFString,
-                                        &ref) == .success,
-          let n = ref as? Int
-    else { return nil }
-    return n
+    let role = (AXUIElementCopyAttributeValue(el, "AXRole" as CFString, &ref) == .success
+                ? ref as? String : nil) ?? ""
+    return textRoles.contains(role) ? .field : .notField
 }
+
+/// Просьба к Chromium построить дерево доступности. Ключа два, оба
+/// исторические: на AXManualAccessibility отзывается Electron,
+/// на AXEnhancedUserInterface — сам Chromium и часть старых приложений.
+/// Дерево появляется не сразу, поэтому первая диктовка в такое окно
+/// всё равно пройдёт вслепую.
+/// Возвращает true, если это приложение мы будим впервые: тогда его
+/// молчанию даётся один заход форы.
+private var wokenApps = Set<String>()
+
+@discardableResult
+private func wakeAccessibility() -> Bool {
+    guard let app = NSWorkspace.shared.frontmostApplication else { return false }
+    let el = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetAttributeValue(el, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    AXUIElementSetAttributeValue(el, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    return wokenApps.insert(app.bundleIdentifier ?? "?").inserted
+}
+
+/// Есть ли сейчас фокус в текстовом поле (даже если оно скрывает,
+/// ГДЕ каретка): по этому решаем, вставится ли ⌘V.
+func hasTextFocus() -> Bool { textFocus() == .field }
 
 /// Точка текстовой каретки (низ) в кокоа-координатах, если приложение
 /// отдаёт её честно. Пустое выделение часто отдаёт мусорные границы —
