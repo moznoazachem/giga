@@ -154,7 +154,7 @@ final class App: NSObject, NSApplicationDelegate {
                let item = self.dlMenuItem {
                 item.attributedTitle = self.menuAttrTitle(
                     L("\(m.name) — качаю \(Brain.shared.downloadPercent)%",
-                      "\(m.name) — downloading \(Brain.shared.downloadPercent)%"),
+                      "\(m.name) — Downloading \(Brain.shared.downloadPercent)%"),
                     sub: L("нажми, чтобы отменить", "click to cancel"))
             } else {
                 self.buildMenu()
@@ -227,15 +227,24 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Значок для пункта меню: сперва системный символ, а если такого нет —
+    /// свой из каталога ассетов (`icon/Assets.xcassets`, build.sh собирает
+    /// его в Assets.car). Свои экспортированы из SF Symbols и ведут себя
+    /// как системные: шаблонные, тех же весов, с тем же оптическим размером.
+    func menuIcon(_ name: String) -> NSImage? {
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+            ?? NSImage(named: name)
+        return img?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+    }
+
     /// Компактный пункт меню: иконка, короткое название и, если надо,
     /// пояснение мелким серым текстом второй строкой.
     func mkItem(_ title: String, sub: String? = nil, icon: String? = nil,
                 action: Selector? = nil) -> NSMenuItem {
         let it = NSMenuItem(title: title, action: action, keyEquivalent: "")
         it.target = self
-        if let icon, let img = NSImage(systemSymbolName: icon, accessibilityDescription: nil) {
+        if let icon, let img = menuIcon(icon) {
             img.isTemplate = true
-            img.size = NSSize(width: 13, height: 13)
             it.image = img
         }
         // все пункты через attributedTitle: так шрифт мельче системного
@@ -305,7 +314,7 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // выбор клавиши диктовки
-        let keyItem = mkItem(L("Клавиша диктовки", "Dictation key"), icon: "keyboard")
+        let keyItem = mkItem(L("Клавиша диктовки", "Dictation Key"), icon: "keyboard")
         let keyMenu = NSMenu()
         for hk in HOTKEYS {
             let item = mkItem(hk.title, action: #selector(pickHotkey(_:)))
@@ -317,22 +326,22 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(keyItem)
 
         // плашка с волной у места набора
-        let waveItem = mkItem(L("Волна у курсора", "Wave near cursor"),
+        let waveItem = mkItem(L("Волна у курсора", "Wave Near Cursor"),
                               icon: "waveform", action: #selector(toggleWave))
         waveItem.state = waveEnabled ? .on : .off
         menu.addItem(waveItem)
 
         // автозапуск при входе
-        let login = mkItem(L("Запускать при входе", "Open at login"),
+        let login = mkItem(L("Запускать при входе", "Open at Login"),
                            icon: "power", action: #selector(toggleLogin))
         login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         menu.addItem(login)
 
         // язык интерфейса: авто / русский / английский
-        let langItem = mkItem(L("Язык меню", "Menu language"), icon: "globe")
+        let langItem = mkItem(L("Язык меню", "Menu Language"), icon: "globe")
         let langMenu = NSMenu()
         let curLang = UserDefaults.standard.string(forKey: "uiLang") ?? "auto"
-        for (code, name) in [("auto", L("Авто (как система)", "Auto (match system)")),
+        for (code, name) in [("auto", L("Авто (как система)", "Auto (Match System)")),
                              ("ru", "Русский"), ("en", "English")] {
             let it = mkItem(name, action: #selector(pickLang(_:)))
             it.representedObject = code
@@ -344,10 +353,11 @@ final class App: NSObject, NSApplicationDelegate {
 
         // Мозг: локальная нейронка правит текст по команде «Писарь, …»
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(mkHeader(L("Мозг Писаря", "Pisar's brain"),
+        menu.addItem(mkHeader(L("Мозг Писаря", "Pisar's Brain"),
                               sub: L("причёсывает надиктованный текст", "polishes dictated text")))
         if Brain.shared.engineAvailable {
-            let off = mkItem(L("Выключен", "Off"), action: #selector(pickBrain(_:)))
+            let off = mkItem(L("Выключен", "Off"), icon: "circle.slash",
+                             action: #selector(pickBrain(_:)))
             off.representedObject = "off"
             off.state = Brain.shared.chosenId == nil ? .on : .off
             menu.addItem(off)
@@ -355,16 +365,18 @@ final class App: NSObject, NSApplicationDelegate {
                 let it: NSMenuItem
                 if Brain.shared.downloadingId == m.id {
                     it = mkItem(L("\(m.name) — качаю \(Brain.shared.downloadPercent)%",
-                                  "\(m.name) — downloading \(Brain.shared.downloadPercent)%"),
+                                  "\(m.name) — Downloading \(Brain.shared.downloadPercent)%"),
                                 sub: L("нажми, чтобы отменить", "click to cancel"),
-                                action: #selector(pickBrain(_:)))
+                                icon: m.icon, action: #selector(pickBrain(_:)))
                     dlMenuItem = it
                 } else if !Brain.shared.downloaded(m) {
                     it = mkItem(L("\(m.name) — скачать \(m.sizeText)",
-                                  "\(m.name) — download \(m.sizeText)"),
-                                sub: m.details, action: #selector(pickBrain(_:)))
+                                  "\(m.name) — Download \(m.sizeText)"),
+                                sub: m.details, icon: m.icon,
+                                action: #selector(pickBrain(_:)))
                 } else {
-                    it = mkItem(m.name, sub: m.details, action: #selector(pickBrain(_:)))
+                    it = mkItem(m.name, sub: m.details, icon: m.icon,
+                                action: #selector(pickBrain(_:)))
                     it.state = Brain.shared.chosenId == m.id ? .on : .off
                 }
                 it.representedObject = m.id
@@ -372,17 +384,19 @@ final class App: NSObject, NSApplicationDelegate {
             }
             // как звать Писаря: менюшка у курсора или только голосом
             menu.addItem(NSMenuItem.separator())
-            let menuMode = mkItem(L("Менюшка после вставки", "Menu after pasting"),
+            let menuMode = mkItem(L("Менюшка после вставки", "Menu After Pasting"),
                                   sub: L("у курсора: 1 мысль · 2 сократить · 3 перевести",
                                          "at the cursor: 1 compose · 2 shorten · 3 translate"),
+                                  icon: "filemenu.and.selection",
                                   action: #selector(pickChipsMode(_:)))
             menuMode.representedObject = "menu"
             menuMode.state = Brain.shared.chipsEnabled ? .on : .off
             menuMode.isEnabled = Brain.shared.chosenId != nil
             menu.addItem(menuMode)
-            let voiceMode = mkItem(L("Только голосом", "Voice only"),
+            let voiceMode = mkItem(L("Только голосом", "Voice Only"),
                                    sub: L("скажи в конце: «Писарь, исправь / переведи…»",
                                           "end with: \u{201C}Pisar, fix this / translate\u{2026}\u{201D}"),
+                                   icon: "person.wave.2",
                                    action: #selector(pickChipsMode(_:)))
             voiceMode.representedObject = "voice"
             voiceMode.state = Brain.shared.chipsEnabled ? .off : .on
@@ -402,10 +416,10 @@ final class App: NSObject, NSApplicationDelegate {
         // версия и обновления — одним компактным пунктом
         if let upd = updateAvailable {
             menu.addItem(mkItem(L("Доступна версия \(upd) — обновить",
-                                  "Version \(upd) available — update"),
+                                  "Version \(upd) Available — Update"),
                                 icon: "arrow.down.circle", action: #selector(startSelfUpdate)))
         }
-        menu.addItem(mkItem(L("Проверить обновления…", "Check for updates…"),
+        menu.addItem(mkItem(L("Проверить обновления…", "Check for Updates…"),
                             sub: L("сейчас стоит \(APP_VERSION)", "installed: \(APP_VERSION)"),
                             icon: "arrow.triangle.2.circlepath",
                             action: #selector(checkUpdatesManual)))

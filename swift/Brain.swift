@@ -25,6 +25,7 @@ struct BrainModel {
     let url: String
     let sizeText: String    // «6,5 ГБ» — для пункта «скачать»
     let minRAMGB: UInt64    // ниже этого объёма памяти отговариваем
+    var icon: String? = nil // значок в меню: системный символ или свой из ресурсов
 }
 
 var BRAIN_MODELS: [BrainModel] { [
@@ -35,7 +36,8 @@ var BRAIN_MODELS: [BrainModel] { [
                file: "GigaChat3.1-10B-A1.8B-q4_K_M.gguf",
                url: "https://huggingface.co/ai-sage/GigaChat3.1-10B-A1.8B-GGUF/resolve/main/GigaChat3.1-10B-A1.8B-q4_K_M.gguf",
                sizeText: L("6,5 ГБ", "6.5 GB"),
-               minRAMGB: 16),
+               minRAMGB: 16,
+               icon: "gigachat"),
     BrainModel(id: "qwen",
                name: "Qwen",
                details: L("лёгкая · 2,5 ГБ · русский неродной, но аккуратная",
@@ -43,7 +45,8 @@ var BRAIN_MODELS: [BrainModel] { [
                file: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
                url: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
                sizeText: L("2,5 ГБ", "2.5 GB"),
-               minRAMGB: 8),
+               minRAMGB: 8,
+               icon: "qwen"),
 ] }
 
 final class Brain: NSObject, URLSessionDownloadDelegate {
