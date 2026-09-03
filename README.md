@@ -133,7 +133,8 @@ on-device, like everything else:
   typos"*, *"make it shorter"*. The result replaces the selection right
   in place; ⌘Z brings the original back. Not in terminals (there is no
   editable selection there)
-- **By menu**: after a raw paste a small menu pops up at the cursor
+- **By menu** (off by default, switch on in the Giga menu): after a raw
+  paste a small menu pops up at the cursor
   (1 tidy up · 2 shorten · 3 translate) — pick with a digit,
   arrows or the mouse; the text is replaced right in the field, with
   "put it back" one keypress away. In terminals the menu wears a terminal
@@ -305,7 +306,8 @@ tccutil reset Accessibility ru.panda.giga
   *«исправь ошибки»*, *«сделай короче»*. Результат встанет на место
   выделенного, ⌘Z вернёт как было. В терминалах не работает (там нет
   редактируемого выделения)
-- **Менюшкой**: после вставки у курсора всплывает меню
+- **Менюшкой** (по умолчанию выключена, включается в меню Гиги): после
+  вставки у курсора всплывает меню
   (1 причесать · 2 сократить · 3 перевести) — выбирай цифрой, стрелками
   или мышью; текст подменяется прямо в поле, рядом «вернуть как было».
   В терминалах меню одевается в терминальный костюм, а подмена идёт

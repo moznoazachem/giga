@@ -8,13 +8,13 @@ import AppKit
 
 /// Что изменилось в ЭТОЙ версии. Обновлять при каждом выпуске вместе с номером.
 let WHATS_NEW: [String] = uiIsRussian ? [
-    "Команды над выделенным текстом: выдели, зажми клавишу диктовки и скажи «переведи» или «исправь»",
-    "Кнопка «Причесать» в менюшке у курсора вместо «Собрать в чёткую мысль»",
-    "Нотаризовано Apple, архив без служебных файлов macOS",
+    "«Что нового» прямо в этом окне: и про твою версию, и про свежую",
+    "Пункт «Рассказать другу…»: ссылка на сайт через Сообщения, Почту, Telegram, AirDrop",
+    "Менюшка после вставки по умолчанию выключена, включается в «Мозге Писаря»",
 ] : [
-    "Commands over selected text: select, hold the dictation key and say “translate” or “fix it”",
-    "“Tidy up” button in the cursor menu instead of “Compose the thought”",
-    "Notarized by Apple, archive free of macOS metadata files",
+    "“What's new” right in this window, for your version and for the fresh one",
+    "“Tell a friend…” menu item: site link via Messages, Mail, Telegram, AirDrop",
+    "The after-paste menu is off by default, switch it on under “Pisar's brain”",
 ]
 
 /// Разбор поля notes из манифеста: словарь по языкам, список или строка.

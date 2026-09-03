@@ -64,10 +64,11 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
     }
     var chosenModel: BrainModel? { BRAIN_MODELS.first { $0.id == chosenId } }
 
-    /// Кнопочки-подсказки после вставки. По умолчанию включены.
+    /// Кнопочки-подсказки после вставки. По умолчанию ВЫКЛЮЧЕНЫ (решение
+    /// от 02.09.2026: менюшка после каждой вставки мешает, кто хочет,
+    /// включит сам). Явный выбор пользователя хранится и уважается.
     var chipsEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "brainChips") == nil
-              || UserDefaults.standard.bool(forKey: "brainChips") }
+        get { UserDefaults.standard.bool(forKey: "brainChips") }
         set { UserDefaults.standard.set(newValue, forKey: "brainChips") }
     }
     /// Мозг готов: модель выбрана и лежит на диске.
