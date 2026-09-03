@@ -973,7 +973,7 @@ final class App: NSObject, NSApplicationDelegate {
                                         "Pisar could not do it. The selection is untouched"))
                     return
                 }
-                self.paste(out)
+                self.paste(out, spacing: false) // встаёт вместо выделенного, пробел лишний
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                     if Brain.shared.chipsEnabled {
                         let p = typingAnchorIfKnown() ?? NSEvent.mouseLocation
@@ -1170,7 +1170,10 @@ final class App: NSObject, NSApplicationDelegate {
                         let p = typingAnchorIfKnown() ?? NSEvent.mouseLocation
                         Chips.shared.showRevert(near: p, terminal: self.frontIsTerminal) { [weak self] in
                             guard let self else { return }
-                            self.undoInsert(chars: out.count)
+                            // считаем по вставленному, а не по ответу мозга:
+                            // paste мог дописать пробел, и в терминале мы
+                            // стираем ровно столько символов, сколько вставили
+                            self.undoInsert(chars: self.lastText?.count ?? out.count)
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                 self.paste(original)
                                 // вернули — и снова предлагаем команды:
@@ -1186,7 +1189,12 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    func paste(_ text: String, offerChips: Bool = false) {
+    /// spacing — дописать пробел в конец. Так следующая фраза не слипается
+    /// с предыдущей, если диктовать подряд. Выключаем там, где текст встаёт
+    /// не в конец, а на место выделенного куска.
+    func paste(_ text: String, offerChips: Bool = false, spacing: Bool = true) {
+        var text = text
+        if spacing, let last = text.last, !last.isWhitespace { text += " " }
         lastText = text
 
         // Вставляем через буфер (быстро и надёжно), но берём его взаймы:
