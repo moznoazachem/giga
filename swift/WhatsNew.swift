@@ -8,13 +8,13 @@ import AppKit
 
 /// Что изменилось в ЭТОЙ версии. Обновлять при каждом выпуске вместе с номером.
 let WHATS_NEW: [String] = uiIsRussian ? [
-    "Буфер обмена возвращается: что скопировал до диктовки, то и вставится по ⌘V",
-    "Волну голоса можно поставить внизу экрана, сообщения теперь в той же плашке",
-    "Значки в меню, менюшка после вставки в системном стиле, пробел между фразами при диктовке подряд",
+    "VS Code, Cursor и другие программы на Electron: диктовка больше не ругается «курсор не в тексте», буфер возвращается",
+    "Рабочий стол Finder больше не принимается за текстовое поле",
+    "Убрано лишнее сообщение «Вставка не прошла»",
 ] : [
-    "The clipboard comes back: whatever you copied before dictating is what ⌘V pastes",
-    "The voice wave can sit at the bottom of the screen, messages now live in the same pill",
-    "Menu icons, a native-looking after-paste menu, a space between phrases when dictating in a row",
+    "VS Code, Cursor and other Electron apps: no more false “cursor wasn't in a text field”, the clipboard comes back",
+    "The Finder desktop is no longer mistaken for a text field",
+    "The spurious “paste didn't land” message is gone",
 ]
 
 /// Разбор поля notes из манифеста: словарь по языкам, список или строка.
