@@ -198,6 +198,26 @@ func focusedFieldFrame() -> NSRect? {
 final class WaveView: NSView {
     var busy = false
 
+    /// Текст вместо столбиков. nil — обычная волна. Одна плашка на оба
+    /// состояния: раньше сообщения показывало отдельное окно, и оно
+    /// налезало на волну, когда оба оказывались нужны разом.
+    var text: String? {
+        didSet { if text != oldValue { needsDisplay = true } }
+    }
+
+    static let textFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+
+    /// Пока мозг работает, по надписи бежит блик: сообщение висит
+    /// секундами, и неподвижная строка выглядит зависшей.
+    var shimmer = false { didSet { if shimmer != oldValue { needsDisplay = true } } }
+    var phase: CGFloat = 0   // 0…1, положение блика
+
+    /// Буквы в виде картинки — ею вырезаем блик, чтобы он ложился
+    /// на текст, а не на плашку. Пересобирается при смене надписи.
+    private var maskCache: NSImage?
+    private var maskText = ""
+    private var maskSize = NSSize.zero
+
     /// Сколько столбиков в плашке.
     static let bars = 13
 
@@ -294,26 +314,26 @@ final class WaveView: NSView {
     /// высот и тем теснее столбики по времени: на крике они должны
     /// разлетаться, на тихой речи — вести себя смирно.
     private func roll() {
-        let низ = 0.75 - 0.55 * level
-        let разброс = max(3, Self.burstSpread - Int(6 * level))
+        let low = 0.75 - 0.55 * level
+        let spread = max(3, Self.burstSpread - Int(6 * level))
         for i in 0..<Self.bars {
-            gain[i] = CGFloat.random(in: низ...1.0)
-            lag[i] = Int.random(in: 0...разброс)
+            gain[i] = CGFloat.random(in: low...1.0)
+            lag[i] = Int.random(in: 0...spread)
         }
         burst = 0
         sinceRoll = 0
     }
 
     func tick(level target: CGFloat) {
-        let рост = target - level
-        level += рост * (рост > 0 ? Self.riseRate : Self.fallRate)
+        let rise = target - level
+        level += rise * (rise > 0 ? Self.riseRate : Self.fallRate)
         sinceRoll += 1
 
         // Голос прибавил — всплеск: каждый столбик берёт себе новую долю
         // громкости и новое опоздание. Пока прошлый всплеск не отыграл,
         // новый не начинаем, иначе доли перебрасывались бы каждый кадр
         // и вернулась бы дрожь.
-        if рост > Self.burstTrigger, burst == nil {
+        if rise > Self.burstTrigger, burst == nil {
             roll()
         } else if level > Self.livelyFrom, sinceRoll >= max(4, Int(18 - 15 * level)) {
             // А пока голос громкий, столбики пересыпаются и сами, без
@@ -329,33 +349,89 @@ final class WaveView: NSView {
             // столбик, чья очередь ещё не подошла, стоит как стоял —
             // от этого всплеск и выглядит разнобоем, а не общим прыжком
             if let age = burst, age < lag[i] { continue }
-            let свой = level * Self.shape(i) * gain[i]
+            let target = level * Self.shape(i) * gain[i]
             // Вверх столбик идёт всегда рывком, вниз — тем резче, чем
             // громче голос: на тихой речи оседает плавно, на громкой
             // рушится почти мгновенно. Отсюда и размах: на крике столбики
             // не покачиваются около одной высоты, а рушатся и взлетают.
-            let скорость = свой > heights[i] ? Self.riseRate
+            let speed = target > heights[i] ? Self.riseRate
                                              : Self.fallRate + Self.fallLoud * level
-            heights[i] += (свой - heights[i]) * скорость
+            heights[i] += (target - heights[i]) * speed
         }
 
         if let age = burst { burst = age < Self.burstSpread ? age + 1 : nil }
         needsDisplay = true
     }
 
+    /// Полоса света, бегущая по буквам. Рисуем градиент во всю плашку
+    /// и вырезаем его буквами: залить сам текст градиентом иначе нельзя —
+    /// заливка легла бы и на плашку под ним.
+    private func shine(_ text: String, at point: NSPoint) {
+        let band: CGFloat = 70
+        let x = -band + phase * (bounds.width + band * 2)
+        // Не «прозрачный → цвет → прозрачный», а с полкой в середине:
+        // на голом остром пике цвет успевал показаться только краем
+        // и на тёмных буквах выглядел блёклым. Полка даёт буквам
+        // побыть полностью цветными.
+        // Ядро полосы — цвет плашки вполсилы: буквы под ним не пропадают,
+        // а светлеют примерно наполовину, будто волна их смывает. Само ядро
+        // узкое, шестнадцатая часть полосы; всё остальное — длинные скаты,
+        // иначе смыв читался бы как дыра в надписи, а не как блик.
+        guard let g = NSGradient(colors: [Self.shineColor.withAlphaComponent(0),
+                                          Self.shineColor.withAlphaComponent(0.34),
+                                          Self.shineColor.withAlphaComponent(0.5),
+                                          Self.shineColor.withAlphaComponent(0.5),
+                                          Self.shineColor.withAlphaComponent(0.34),
+                                          Self.shineColor.withAlphaComponent(0)],
+                                 atLocations: [0, 0.30, 0.47, 0.53, 0.70, 1],
+                                 colorSpace: .sRGB)
+        else { return }
+        let overlay = NSImage(size: bounds.size)
+        overlay.lockFocus()
+        g.draw(in: NSRect(x: x, y: 0, width: band, height: bounds.height), angle: 0)
+        mask(text, at: point).draw(in: NSRect(origin: .zero, size: bounds.size),
+                                    from: .zero, operation: .destinationIn, fraction: 1)
+        overlay.unlockFocus()
+        // Один проход: плотность задаёт сам градиент. Раньше слой рисовался
+        // дважды — это было нужно цветному блику, чтобы он не смешивался
+        // с чёрным в грязь, но белому лишняя плотность ни к чему.
+        overlay.draw(in: bounds)
+    }
+
+    /// Цвет блика — цвет самой плашки: волна не красит буквы, а смывает их.
+    static let shineColor = NSColor.white
+
+    /// Буквы непрозрачным чёрным — от маски нужна только форма. Рисовать
+    /// её тем же светло-серым нельзя: сквозь бледную маску и блик вышел бы
+    /// бледным, а он должен идти в полную силу.
+    private func mask(_ text: String, at point: NSPoint) -> NSImage {
+        if let m = maskCache, maskText == text, maskSize == bounds.size { return m }
+        let s = NSAttributedString(string: text,
+                                   attributes: [.font: Self.textFont,
+                                                .foregroundColor: NSColor.black])
+        let img = NSImage(size: bounds.size)
+        img.lockFocus()
+        s.draw(at: point)
+        img.unlockFocus()
+        maskCache = img
+        maskText = text
+        maskSize = bounds.size
+        return img
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        let растёт = scale != 1
-        if растёт {
+        let growing = scale != 1
+        if growing {
             NSGraphicsContext.saveGraphicsState()
-            let якорь = popFromCenter ? NSPoint(x: bounds.midX, y: bounds.midY)
+            let anchor = popFromCenter ? NSPoint(x: bounds.midX, y: bounds.midY)
                                       : NSPoint(x: 0, y: bounds.height)
             let t = NSAffineTransform()
-            t.translateX(by: якорь.x, yBy: якорь.y)
+            t.translateX(by: anchor.x, yBy: anchor.y)
             t.scaleX(by: scale, yBy: scale)
-            t.translateX(by: -якорь.x, yBy: -якорь.y)
+            t.translateX(by: -anchor.x, yBy: -anchor.y)
             t.concat()
         }
-        defer { if растёт { NSGraphicsContext.restoreGraphicsState() } }
+        defer { if growing { NSGraphicsContext.restoreGraphicsState() } }
 
         // светлая плашка: белая, с тонкой окантовкой, чтобы читалась
         // и на белом фоне, и на тёмном
@@ -366,6 +442,19 @@ final class WaveView: NSView {
         NSColor.black.withAlphaComponent(0.12).setStroke()
         pill.lineWidth = 1
         pill.stroke()
+
+        if let text {
+            let s = NSAttributedString(
+                string: text,
+                attributes: [.font: Self.textFont,
+                             .foregroundColor: NSColor.black.withAlphaComponent(0.85)])
+            let sz = s.size()
+            let point = NSPoint(x: (bounds.width - sz.width) / 2,
+                                y: (bounds.height - sz.height) / 2)
+            s.draw(at: point)
+            if shimmer { shine(text, at: point) }
+            return
+        }
 
         let bars = heights.count
         // 13 столбиков: 2,5 пункта ширины с зазором 1,5, поля по краям
@@ -402,76 +491,26 @@ final class WaveView: NSView {
     }
 }
 
-/// Короткая всплывашка с текстом — для случаев вроде «курсор был не в поле».
-final class Toast {
-    static let shared = Toast()
-    private let panel: NSPanel
-    private let label = NSTextField(labelWithString: "")
+/// Сообщения Писаря. Отдельным окном они были раньше и налезали на волну;
+/// теперь это её же плашка в текстовом состоянии. Имя оставлено, чтобы
+/// не переписывать полтора десятка мест, которые ею говорят.
+enum Toast {
+    static let shared = Toast.self
 
-    private init() {
-        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered, defer: true)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        // тот же стиль, что у плашки с волной: белая, с тонкой окантовкой
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = .black.withAlphaComponent(0.85)
-        label.alignment = .center
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.96).cgColor
-        box.layer?.cornerRadius = 13
-        box.layer?.borderWidth = 1
-        box.layer?.borderColor = NSColor.black.withAlphaComponent(0.12).cgColor
-        box.addSubview(label)
-        panel.contentView = box
+    static func show(_ text: String, seconds: Double = 3.5, near point: NSPoint? = nil) {
+        WavePanel.shared.say(text, seconds: seconds, near: point)
     }
-
-    private var generation = 0
 
     /// Липкая плашка-статус: висит, пока не позовут hide().
-    func showSticky(_ text: String) { show(text, seconds: 0) }
+    static func showSticky(_ text: String) { show(text, seconds: 0) }
 
-    func hide() {
-        generation += 1
-        panel.orderOut(nil)
-    }
-
-    func show(_ text: String, seconds: Double = 3.5, near point: NSPoint? = nil) {
-        label.stringValue = text
-        label.sizeToFit()
-        let pad: CGFloat = 12
-        let size = NSSize(width: label.frame.width + pad * 2,
-                          height: label.frame.height + pad)
-        label.setFrameOrigin(NSPoint(x: pad, y: pad / 2))
-        // якорь можно задать снаружи (например, под иконкой в строке меню);
-        // иначе — у места набора: смотрят туда, где появится текст
-        let p = point ?? typingAnchorIfKnown() ?? NSEvent.mouseLocation
-        var origin = NSPoint(x: p.x + 14, y: p.y - size.height - 12)
-        let screen = NSScreen.screens.first { $0.frame.contains(p) } ?? NSScreen.main
-        if let f = screen?.visibleFrame {
-            origin.x = min(max(origin.x, f.minX + 4), f.maxX - size.width - 4)
-            origin.y = min(max(origin.y, f.minY + 4), f.maxY - size.height - 4)
-        }
-        panel.setFrame(NSRect(origin: origin, size: size), display: true)
-        panel.orderFrontRegardless()
-        generation += 1
-        let g = generation
-        if seconds > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-                guard let self, self.generation == g else { return }
-                self.panel.orderOut(nil)
-            }
-        }
-    }
+    static func hide() { WavePanel.shared.saidEnough() }
 }
 
 final class WavePanel {
+    /// Плашка одна на приложение: и волна, и сообщения — её состояния.
+    static let shared = WavePanel()
+
     private let panel: NSPanel
     private let view = WaveView()
     private var popTimer: Timer?
@@ -525,8 +564,8 @@ final class WavePanel {
     /// десятой части высоты от низа. У каретки — прибитое, если плашку
     /// перетаскивали, иначе чуть ниже и правее точки набора. И в любом
     /// случае не за краем экрана.
-    private func clampedOrigin(for p: NSPoint) -> NSPoint {
-        let size = panel.frame.size
+    private func clampedOrigin(for p: NSPoint, size: NSSize? = nil) -> NSPoint {
+        let size = size ?? panel.frame.size
         let bottom = Self.place == .bottom
         // экран берём тот, где идёт набор: у нижней плашки тоже — она
         // должна висеть на том мониторе, куда человек смотрит
@@ -547,13 +586,131 @@ final class WavePanel {
         return origin
     }
 
+    /// Размер плашки: у волны свой, у текста — по длине надписи.
+    private static let barsSize = NSSize(width: 68, height: 26)
+
+    private static func size(for text: String) -> NSSize {
+        let w = NSAttributedString(string: text,
+                                   attributes: [.font: WaveView.textFont]).size().width
+        let screen = (NSScreen.main?.visibleFrame.width ?? 1200) - 80
+        return NSSize(width: min(max(ceil(w) + 28, barsSize.width), screen),
+                      height: barsSize.height)
+    }
+
+    /// Нужна ли волна прямо сейчас. По ней решаем, куда возвращаться,
+    /// когда сообщение отвисит своё: к столбикам или в никуда.
+    private var barsWanted = false
+
+    /// Номер показа: по нему сообщение узнаёт, не пришло ли следом другое.
+    private var generation = 0
+
+    private var sizeTimer: Timer?
+    private var shimmerTimer: Timer?
+
     func show(near p: NSPoint) {
-        let origin = clampedOrigin(for: p)
+        barsWanted = true
+        generation += 1
+        view.text = nil
+        view.busy = false // прошлая диктовка кончилась «думаю» — гасим синеву
+        present(size: Self.barsSize, near: p)
+    }
+
+    /// Сообщение в той же плашке. seconds = 0 — висит, пока не позовут
+    /// hide(): так Мозг Писаря держит «Причёсываю…» всё время работы.
+    func say(_ text: String, seconds: Double = 3.5, near point: NSPoint? = nil) {
+        generation += 1
+        let g = generation
         view.busy = false
+        view.text = text
+        // Липкое сообщение вешает только мозг, пока работает, — по нему
+        // и пускаем блик. У обычных сообщений свой срок, они и так живые.
+        shine(seconds == 0)
+        present(size: Self.size(for: text),
+                 near: point ?? typingAnchorIfKnown() ?? NSEvent.mouseLocation,
+                 explicit: point != nil)
+        guard seconds > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.generation == g else { return }
+            self.saidEnough()
+        }
+    }
+
+    /// Сообщение отговорило: если волна всё ещё нужна — возвращаемся
+    /// к столбикам, иначе плашка уходит.
+    func saidEnough() {
+        generation += 1
+        shine(false)
+        // Текст снимаем ПЕРВЫМ делом: hide() намеренно не гасит плашку
+        // с висящим сообщением, и если сбросить текст после, она так
+        // и останется на экране.
+        view.text = nil
+        guard barsWanted else { hide(); return }
+        resize(to: Self.barsSize)
+    }
+
+    /// Показать плашку нужного размера: если её ещё нет — с прыжком,
+    /// если уже висит — плавно переехав из прежнего размера.
+    /// явный — место задано снаружи (скажем, под иконкой в строке меню):
+    /// такому сообщению плашка переезжает, а не раздаётся на месте.
+    private func present(size: NSSize, near p: NSPoint, explicit: Bool = false) {
+        if panel.isVisible {
+            if explicit {
+                move(to: NSRect(origin: clampedOrigin(for: p, size: size), size: size))
+            } else {
+                resize(to: size)
+            }
+            return
+        }
+        sizeTimer?.invalidate()
+        let origin = clampedOrigin(for: p, size: size)
         NSLog("Гига волна: показ в \(origin)\(Self.pinned != nil ? " (прибита)" : "")")
-        panel.setFrameOrigin(origin)
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
         panel.orderFrontRegardless()
         pop()
+    }
+
+    /// Смена размера на месте. Плашка раздаётся из своего якоря: внизу
+    /// экрана — из середины (центр стоит, края расходятся), у курсора —
+    /// от левого верхнего угла (он стоит, плашка растёт вправо). Якорь
+    /// берём у нынешней рамки, а не спрашиваем каретку заново: пока висело
+    /// сообщение, курсор мог уехать, и плашка прыгнула бы вслед за ним.
+    private func resize(to size: NSSize) {
+        sizeTimer?.invalidate()
+        let from = panel.frame
+        var corner: NSPoint
+        if Self.place == .bottom {
+            corner = NSPoint(x: from.midX - size.width / 2, y: from.minY)
+        } else {
+            corner = NSPoint(x: from.minX, y: from.maxY - size.height)
+        }
+        if let f = (NSScreen.screens.first { $0.frame.intersects(from) } ?? NSScreen.main)?.visibleFrame {
+            corner.x = min(max(corner.x, f.minX + 4), f.maxX - size.width - 4)
+            corner.y = min(max(corner.y, f.minY + 4), f.maxY - size.height - 4)
+        }
+        move(to: NSRect(origin: corner, size: size))
+    }
+
+    /// Переезд рамки за восемь кадров.
+    private func move(to to: NSRect) {
+        sizeTimer?.invalidate()
+        let from = panel.frame
+        guard from != to else { return }
+        let steps = 8
+        var step = 0
+        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] tm in
+            guard let self else { tm.invalidate(); return }
+            step += 1
+            let x = min(CGFloat(step) / CGFloat(steps), 1)
+            let progress = 1 - pow(1 - x, 3)   // easeOutCubic: резво тронулась, мягко встала
+            self.panel.setFrame(NSRect(x: from.minX + (to.minX - from.minX) * progress,
+                                       y: from.minY + (to.minY - from.minY) * progress,
+                                       width: from.width + (to.width - from.width) * progress,
+                                       height: from.height + (to.height - from.height) * progress),
+                                display: true)
+            if x >= 1 { tm.invalidate(); self.sizeTimer = nil }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        sizeTimer = t
     }
 
     /// Появление: плашка за 12 кадров вырастает из своего якоря (у курсора —
@@ -563,23 +720,23 @@ final class WavePanel {
     /// поэтому ни положение, ни перетаскивание от анимации не зависят.
     private func pop() {
         popTimer?.invalidate()
-        let кадров = 12
-        var кадр = 0
+        let steps = 12
+        var step = 0
         view.popFromCenter = Self.place == .bottom
         view.scale = Self.popFrom
         view.needsDisplay = true
         let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] tm in
             guard let self else { tm.invalidate(); return }
-            кадр += 1
-            if кадр >= кадров {
+            step += 1
+            if step >= steps {
                 self.view.scale = 1
                 tm.invalidate()
                 self.popTimer = nil
             } else {
                 // easeOutBack: к концу перелетает размер примерно на 7%
-                let x = CGFloat(кадр) / CGFloat(кадров) - 1
-                let ход = 1 + (Self.popBack + 1) * x * x * x + Self.popBack * x * x
-                self.view.scale = Self.popFrom + (1 - Self.popFrom) * ход
+                let x = CGFloat(step) / CGFloat(steps) - 1
+                let progress = 1 + (Self.popBack + 1) * x * x * x + Self.popBack * x * x
+                self.view.scale = Self.popFrom + (1 - Self.popFrom) * progress
             }
             self.view.needsDisplay = true
             self.panel.invalidateShadow() // тень должна ужиматься вместе с плашкой
@@ -605,6 +762,25 @@ final class WavePanel {
         panel.setFrameOrigin(o)
     }
 
+    /// Пустить или погасить бегущий блик по надписи. Кадры — тридцать
+    /// в секунду: блик медленный, чаще незачем, а каждый кадр это две
+    /// картинки размером с плашку.
+    private func shine(_ on: Bool) {
+        shimmerTimer?.invalidate()
+        shimmerTimer = nil
+        view.shimmer = on
+        guard on else { return }
+        view.phase = 0
+        let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.view.phase += 0.02          // круг примерно за полторы секунды
+            if self.view.phase > 1 { self.view.phase = 0 }
+            self.view.needsDisplay = true
+        }
+        RunLoop.main.add(t, forMode: .common)
+        shimmerTimer = t
+    }
+
     func tick(level: CGFloat) { view.tick(level: level) }
 
     /// Столбики для иконки в строке меню: там места на пять, поэтому
@@ -619,9 +795,16 @@ final class WavePanel {
         view.needsDisplay = true
     }
 
+    /// Волна больше не нужна. Висящее сообщение при этом не сбиваем —
+    /// оно само уйдёт по времени или по saidEnough().
     func hide() {
+        barsWanted = false
+        guard view.text == nil else { return }
+        shine(false)
         popTimer?.invalidate()
         popTimer = nil
+        sizeTimer?.invalidate()
+        sizeTimer = nil
         view.scale = 1
         panel.orderOut(nil)
     }

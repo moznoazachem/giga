@@ -105,7 +105,7 @@ final class App: NSObject, NSApplicationDelegate {
     let recognizerQueue = DispatchQueue(label: "ru.panda.giga.recognizer")
 
     /// Плашка с волной у места набора (выключается в меню).
-    let wave = WavePanel()
+    let wave = WavePanel.shared
     var waveEnabled: Bool { UserDefaults.standard.object(forKey: "wavePanel") as? Bool ?? true }
 
     /// Номер свежей версии с зеркал, если она новее нашей, и её ссылки.
@@ -330,13 +330,13 @@ final class App: NSObject, NSApplicationDelegate {
         // плашка с волной: выключена, у места набора или внизу экрана
         let waveItem = mkItem(L("Волна голоса", "Voice Wave"), icon: "waveform")
         let waveMenu = NSMenu()
-        let место = waveEnabled ? WavePanel.place.rawValue : "off"
+        let picked = waveEnabled ? WavePanel.place.rawValue : "off"
         for (id, name) in [("off", L("Выключена", "Off")),
                            ("cursor", L("У курсора", "Near Cursor")),
                            ("bottom", L("Внизу экрана", "Bottom of Screen"))] {
             let it = mkItem(name, action: #selector(pickWave(_:)))
             it.representedObject = id
-            it.state = место == id ? .on : .off
+            it.state = picked == id ? .on : .off
             waveMenu.addItem(it)
         }
         waveItem.submenu = waveMenu
@@ -506,12 +506,12 @@ final class App: NSObject, NSApplicationDelegate {
             self?.statusItem.button?.title = " " + s
         }, ready: { [weak self] in
             self?.quitForUpdateWhenIdle()
-        }, fail: { [weak self] причина in
+        }, fail: { [weak self] reason in
             self?.statusItem.button?.title = ""
             let a = NSAlert()
             a.messageText = L("Обновиться само не получилось", "Self-update didn't work")
-            a.informativeText = L("Причина: \(причина).\nМожно скачать вручную со страницы выпуска — это просто замена приложения.",
-                                  "Reason: \(причина).\nYou can download it manually from the releases page — it's just replacing the app.")
+            a.informativeText = L("Причина: \(reason).\nМожно скачать вручную со страницы выпуска — это просто замена приложения.",
+                                  "Reason: \(reason).\nYou can download it manually from the releases page — it's just replacing the app.")
             a.addButton(withTitle: L("Открыть страницу", "Open the page"))
             a.addButton(withTitle: L("Позже", "Later"))
             if a.runModal() == .alertFirstButtonReturn { self?.openReleases() }
@@ -646,14 +646,14 @@ final class App: NSObject, NSApplicationDelegate {
         statusItem.button?.imagePosition = .imageLeft
         modelDL = Downloader(onPercent: { [weak self] p in
             self?.statusItem.button?.title = " ↓\(p)%"
-        }, onDone: { [weak self] file, беда in
+        }, onDone: { [weak self] file, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.modelDL = nil
                 self.statusItem.button?.title = ""
                 guard let file else {
-                    Toast.shared.show(L("Модель не скачалась (\(беда ?? "сеть")) — попробуй позже, окно появится снова при запуске",
-                                        "Model download failed (\(беда ?? "network")) — try again later, the prompt returns on launch"))
+                    Toast.shared.show(L("Модель не скачалась (\(error ?? "сеть")) — попробуй позже, окно появится снова при запуске",
+                                        "Model download failed (\(error ?? "network")) — try again later, the prompt returns on launch"))
                     return
                 }
                 self.unpackSpeechModel(file)
@@ -990,9 +990,9 @@ final class App: NSObject, NSApplicationDelegate {
                 }
                 return
             }
-            let текст: String
+            let text: String
             do {
-                текст = try r.transcribe(samples: samples, rate: 16000)
+                text = try r.transcribe(samples: samples, rate: 16000)
             } catch {
                 NSLog("Гига Писарь: не распознал — \(error)")
                 DispatchQueue.main.async {
@@ -1003,24 +1003,24 @@ final class App: NSObject, NSApplicationDelegate {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                if текст.isEmpty {
+                if text.isEmpty {
                     self.setState(.idle)
                     self.flashError()
                     return
                 }
                 // Было выделение при нажатии рации? Тогда это команда над ним.
-                if self.runSelectionCommand(текст) { return }
+                if self.runSelectionCommand(text) { return }
                 // Сразу в буфер: что бы дальше ни случилось (мозг завис,
                 // вставка не прошла, приложение перезапустили) — наговоренное
                 // уже не потеряется, его можно вставить самому через ⌘V.
                 let pb = NSPasteboard.general
                 pb.clearContents()
-                pb.setString(текст, forType: .string)
+                pb.setString(text, forType: .string)
                 // Обращение «Писарь, …» в конце? Сперва текст идёт в мозг.
-                if let (body, cmd) = Brain.parseCommand(текст) {
+                if let (body, cmd) = Brain.parseCommand(text) {
                     guard Brain.shared.ready, Brain.shared.engineAvailable else {
                         self.setState(.idle)
-                        self.paste(текст)
+                        self.paste(text)
                         if Brain.shared.chosenId == nil, Brain.shared.engineAvailable {
                             Toast.shared.show(L("Похоже на команду Писарю — включи мозг в меню Гиги",
                                                 "Sounded like a Pisar command — pick a brain in the Giga menu"))
@@ -1034,7 +1034,7 @@ final class App: NSObject, NSApplicationDelegate {
                             if let out {
                                 self.paste(out)
                             } else {
-                                self.paste(текст)
+                                self.paste(text)
                                 Toast.shared.show(L("Писарь не справился — вставил как есть",
                                                     "Pisar could not do it — pasted as is"))
                             }
@@ -1043,7 +1043,7 @@ final class App: NSObject, NSApplicationDelegate {
                     return
                 }
                 self.setState(.idle)
-                self.paste(текст, offerChips: true)
+                self.paste(text, offerChips: true)
             }
         }
     }
@@ -1159,7 +1159,7 @@ final class App: NSObject, NSApplicationDelegate {
         // а не про координаты каретки: терминалы и Electron часто скрывают,
         // ГДЕ каретка, но поле-то у них есть и ⌘V сработает. Если поля нет —
         // ⌘V всё равно нажмём, но буфер НЕ затираем и подсказываем.
-        let вПоле = hasTextFocus()
+        let inField = hasTextFocus()
         // Нажать ⌘V за пользователя можно только с разрешением Accessibility.
         let trusted = AXIsProcessTrusted() || CGPreflightPostEventAccess()
         guard trusted else {
@@ -1174,7 +1174,7 @@ final class App: NSObject, NSApplicationDelegate {
             return
         }
         pressKey(9, .maskCommand) // ⌘V
-        if вПоле {
+        if inField {
             // Менюшка: сырой текст вставлен, предложить причесать.
             if offerChips, Brain.shared.ready, Brain.shared.chipsEnabled {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
