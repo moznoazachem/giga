@@ -105,7 +105,7 @@ final class App: NSObject, NSApplicationDelegate {
     let recognizerQueue = DispatchQueue(label: "ru.panda.giga.recognizer")
 
     /// Плашка с волной у места набора (выключается в меню).
-    let wave = WavePanel()
+    let wave = WavePanel.shared
     var waveEnabled: Bool { UserDefaults.standard.object(forKey: "wavePanel") as? Bool ?? true }
 
     /// Номер свежей версии с зеркал, если она новее нашей, и её ссылки.
@@ -114,6 +114,44 @@ final class App: NSObject, NSApplicationDelegate {
 
     /// Последняя удачная диктовка — страховка на случай «курсор был не в поле».
     var lastText: String?
+
+    /// Что лежало в буфере до диктовки. Вставлять можно только через буфер
+    /// (иначе ⌘V не нажать), но забирать его насовсем — невежливо: как только
+    /// текст встал в поле, возвращаем человеку то, что он копировал сам.
+    private var clipboardBefore: [NSPasteboardItem]?
+
+    /// Счётчик изменений буфера сразу после того, как мы положили туда своё.
+    /// По нему видно, не копировал ли человек что-то ещё, пока шла вставка.
+    private var clipboardMark = 0
+
+    /// Сколько ждать перед возвратом буфера. Приложение читает буфер, разбирая
+    /// наше ⌘V, и если вернуть прежнее слишком рано, вставится оно.
+    static let clipboardHold: TimeInterval = 0.5
+
+    /// Запомнить буфер перед тем, как класть в него диктовку. Второй раз
+    /// за заход не перезапоминаем: беречь надо самое первое, пользовательское.
+    func stashClipboard() {
+        guard clipboardBefore == nil else { return }
+        clipboardBefore = (NSPasteboard.general.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for t in item.types { if let d = item.data(forType: t) { copy.setData(d, forType: t) } }
+            return copy
+        }
+    }
+
+    /// Вернуть буфер как был — но только если в нём всё ещё наша диктовка:
+    /// человек мог за эти полсекунды скопировать что-то своё.
+    func restoreClipboard() {
+        guard let items = clipboardBefore else { return }
+        clipboardBefore = nil
+        let pb = NSPasteboard.general
+        guard pb.changeCount == clipboardMark else { return }
+        pb.clearContents()
+        if !items.isEmpty { pb.writeObjects(items) }
+    }
+
+    /// Вставить не вышло — диктовка остаётся в буфере, прежнее забываем.
+    func keepClipboard() { clipboardBefore = nil }
     /// Текст, который был выделен в момент нажатия рации. Если он есть и
     /// мозг включён, речь считается командой над ним, а не диктовкой.
     var selectionAtStart: String?
@@ -156,7 +194,7 @@ final class App: NSObject, NSApplicationDelegate {
                let item = self.dlMenuItem {
                 item.attributedTitle = self.menuAttrTitle(
                     L("\(m.name) — качаю \(Brain.shared.downloadPercent)%",
-                      "\(m.name) — downloading \(Brain.shared.downloadPercent)%"),
+                      "\(m.name) — Downloading \(Brain.shared.downloadPercent)%"),
                     sub: L("нажми, чтобы отменить", "click to cancel"))
             } else {
                 self.buildMenu()
@@ -229,15 +267,24 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Значок для пункта меню: сперва системный символ, а если такого нет —
+    /// свой из каталога ассетов (`icon/Assets.xcassets`, build.sh собирает
+    /// его в Assets.car). Свои экспортированы из SF Symbols и ведут себя
+    /// как системные: шаблонные, тех же весов, с тем же оптическим размером.
+    func menuIcon(_ name: String) -> NSImage? {
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+            ?? NSImage(named: name)
+        return img?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+    }
+
     /// Компактный пункт меню: иконка, короткое название и, если надо,
     /// пояснение мелким серым текстом второй строкой.
     func mkItem(_ title: String, sub: String? = nil, icon: String? = nil,
                 action: Selector? = nil) -> NSMenuItem {
         let it = NSMenuItem(title: title, action: action, keyEquivalent: "")
         it.target = self
-        if let icon, let img = NSImage(systemSymbolName: icon, accessibilityDescription: nil) {
+        if let icon, let img = menuIcon(icon) {
             img.isTemplate = true
-            img.size = NSSize(width: 13, height: 13)
             it.image = img
         }
         // все пункты через attributedTitle: так шрифт мельче системного
@@ -307,7 +354,7 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // выбор клавиши диктовки
-        let keyItem = mkItem(L("Клавиша диктовки", "Dictation key"), icon: "keyboard")
+        let keyItem = mkItem(L("Клавиша диктовки", "Dictation Key"), icon: "keyboard")
         let keyMenu = NSMenu()
         for hk in HOTKEYS {
             let item = mkItem(hk.title, action: #selector(pickHotkey(_:)))
@@ -318,23 +365,32 @@ final class App: NSObject, NSApplicationDelegate {
         keyItem.submenu = keyMenu
         menu.addItem(keyItem)
 
-        // плашка с волной у места набора
-        let waveItem = mkItem(L("Волна у курсора", "Wave near cursor"),
-                              icon: "waveform", action: #selector(toggleWave))
-        waveItem.state = waveEnabled ? .on : .off
+        // плашка с волной: выключена, у места набора или внизу экрана
+        let waveItem = mkItem(L("Волна голоса", "Voice Wave"), icon: "waveform")
+        let waveMenu = NSMenu()
+        let picked = waveEnabled ? WavePanel.place.rawValue : "off"
+        for (id, name) in [("off", L("Выключена", "Off")),
+                           ("cursor", L("У курсора", "Near Cursor")),
+                           ("bottom", L("Внизу экрана", "Bottom of Screen"))] {
+            let it = mkItem(name, action: #selector(pickWave(_:)))
+            it.representedObject = id
+            it.state = picked == id ? .on : .off
+            waveMenu.addItem(it)
+        }
+        waveItem.submenu = waveMenu
         menu.addItem(waveItem)
 
         // автозапуск при входе
-        let login = mkItem(L("Запускать при входе", "Open at login"),
+        let login = mkItem(L("Запускать при входе", "Open at Login"),
                            icon: "power", action: #selector(toggleLogin))
         login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         menu.addItem(login)
 
         // язык интерфейса: авто / русский / английский
-        let langItem = mkItem(L("Язык меню", "Menu language"), icon: "globe")
+        let langItem = mkItem(L("Язык меню", "Menu Language"), icon: "globe")
         let langMenu = NSMenu()
         let curLang = UserDefaults.standard.string(forKey: "uiLang") ?? "auto"
-        for (code, name) in [("auto", L("Авто (как система)", "Auto (match system)")),
+        for (code, name) in [("auto", L("Авто (как система)", "Auto (Match System)")),
                              ("ru", "Русский"), ("en", "English")] {
             let it = mkItem(name, action: #selector(pickLang(_:)))
             it.representedObject = code
@@ -346,10 +402,11 @@ final class App: NSObject, NSApplicationDelegate {
 
         // Мозг: локальная нейронка правит текст по команде «Писарь, …»
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(mkHeader(L("Мозг Писаря", "Pisar's brain"),
+        menu.addItem(mkHeader(L("Мозг Писаря", "Pisar's Brain"),
                               sub: L("причёсывает надиктованный текст", "polishes dictated text")))
         if Brain.shared.engineAvailable {
-            let off = mkItem(L("Выключен", "Off"), action: #selector(pickBrain(_:)))
+            let off = mkItem(L("Выключен", "Off"), icon: "circle.slash",
+                             action: #selector(pickBrain(_:)))
             off.representedObject = "off"
             off.state = Brain.shared.chosenId == nil ? .on : .off
             menu.addItem(off)
@@ -357,16 +414,18 @@ final class App: NSObject, NSApplicationDelegate {
                 let it: NSMenuItem
                 if Brain.shared.downloadingId == m.id {
                     it = mkItem(L("\(m.name) — качаю \(Brain.shared.downloadPercent)%",
-                                  "\(m.name) — downloading \(Brain.shared.downloadPercent)%"),
+                                  "\(m.name) — Downloading \(Brain.shared.downloadPercent)%"),
                                 sub: L("нажми, чтобы отменить", "click to cancel"),
-                                action: #selector(pickBrain(_:)))
+                                icon: m.icon, action: #selector(pickBrain(_:)))
                     dlMenuItem = it
                 } else if !Brain.shared.downloaded(m) {
                     it = mkItem(L("\(m.name) — скачать \(m.sizeText)",
-                                  "\(m.name) — download \(m.sizeText)"),
-                                sub: m.details, action: #selector(pickBrain(_:)))
+                                  "\(m.name) — Download \(m.sizeText)"),
+                                sub: m.details, icon: m.icon,
+                                action: #selector(pickBrain(_:)))
                 } else {
-                    it = mkItem(m.name, sub: m.details, action: #selector(pickBrain(_:)))
+                    it = mkItem(m.name, sub: m.details, icon: m.icon,
+                                action: #selector(pickBrain(_:)))
                     it.state = Brain.shared.chosenId == m.id ? .on : .off
                 }
                 it.representedObject = m.id
@@ -374,17 +433,19 @@ final class App: NSObject, NSApplicationDelegate {
             }
             // как звать Писаря: менюшка у курсора или только голосом
             menu.addItem(NSMenuItem.separator())
-            let menuMode = mkItem(L("Менюшка после вставки", "Menu after pasting"),
+            let menuMode = mkItem(L("Менюшка после вставки", "Menu After Pasting"),
                                   sub: L("у курсора: 1 причесать · 2 сократить · 3 перевести",
                                          "at the cursor: 1 tidy up · 2 shorten · 3 translate"),
+                                  icon: "filemenu.and.selection",
                                   action: #selector(pickChipsMode(_:)))
             menuMode.representedObject = "menu"
             menuMode.state = Brain.shared.chipsEnabled ? .on : .off
             menuMode.isEnabled = Brain.shared.chosenId != nil
             menu.addItem(menuMode)
-            let voiceMode = mkItem(L("Только голосом", "Voice only"),
+            let voiceMode = mkItem(L("Только голосом", "Voice Only"),
                                    sub: L("скажи в конце: «Писарь, исправь / переведи…»",
                                           "end with: \u{201C}Pisar, fix this / translate\u{2026}\u{201D}"),
+                                   icon: "person.wave.2",
                                    action: #selector(pickChipsMode(_:)))
             voiceMode.representedObject = "voice"
             voiceMode.state = Brain.shared.chipsEnabled ? .off : .on
@@ -404,14 +465,14 @@ final class App: NSObject, NSApplicationDelegate {
         // версия и обновления — одним компактным пунктом
         if let upd = updateAvailable {
             menu.addItem(mkItem(L("Доступна версия \(upd) — обновить",
-                                  "Version \(upd) available — update"),
+                                  "Version \(upd) Available — Update"),
                                 icon: "arrow.down.circle", action: #selector(startSelfUpdate)))
         }
-        menu.addItem(mkItem(L("Проверить обновления…", "Check for updates…"),
+        menu.addItem(mkItem(L("Проверить обновления…", "Check for Updates…"),
                             sub: L("сейчас стоит \(APP_VERSION)", "installed: \(APP_VERSION)"),
                             icon: "arrow.triangle.2.circlepath",
                             action: #selector(checkUpdatesManual)))
-        menu.addItem(mkItem(L("Рассказать другу…", "Tell a friend…"),
+        menu.addItem(mkItem(L("Рассказать другу…", "Tell a Friend…"),
                             sub: L("ссылка на сайт: Сообщения, Почта, Telegram, AirDrop",
                                    "site link via Messages, Mail, Telegram, AirDrop"),
                             icon: "square.and.arrow.up", action: #selector(shareApp)))
@@ -449,9 +510,16 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc func toggleWave() {
-        UserDefaults.standard.set(!waveEnabled, forKey: "wavePanel")
-        if !waveEnabled { wave.hide() }
+    @objc func pickWave(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(id != "off", forKey: "wavePanel")
+        if let p = WavePanel.Place(rawValue: id) { WavePanel.place = p }
+        if !waveEnabled {
+            wave.hide()
+        } else if state == .rec {
+            // выбрали прямо во время диктовки — плашка переезжает сразу
+            wave.show(near: typingAnchor())
+        }
         buildMenu()
     }
 
@@ -476,12 +544,12 @@ final class App: NSObject, NSApplicationDelegate {
             self?.statusItem.button?.title = " " + s
         }, ready: { [weak self] in
             self?.quitForUpdateWhenIdle()
-        }, fail: { [weak self] причина in
+        }, fail: { [weak self] reason in
             self?.statusItem.button?.title = ""
             let a = NSAlert()
             a.messageText = L("Обновиться само не получилось", "Self-update didn't work")
-            a.informativeText = L("Причина: \(причина).\nМожно скачать вручную со страницы выпуска — это просто замена приложения.",
-                                  "Reason: \(причина).\nYou can download it manually from the releases page — it's just replacing the app.")
+            a.informativeText = L("Причина: \(reason).\nМожно скачать вручную со страницы выпуска — это просто замена приложения.",
+                                  "Reason: \(reason).\nYou can download it manually from the releases page — it's just replacing the app.")
             a.addButton(withTitle: L("Открыть страницу", "Open the page"))
             a.addButton(withTitle: L("Позже", "Later"))
             if a.runModal() == .alertFirstButtonReturn { self?.openReleases() }
@@ -616,14 +684,14 @@ final class App: NSObject, NSApplicationDelegate {
         statusItem.button?.imagePosition = .imageLeft
         modelDL = Downloader(onPercent: { [weak self] p in
             self?.statusItem.button?.title = " ↓\(p)%"
-        }, onDone: { [weak self] file, беда in
+        }, onDone: { [weak self] file, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.modelDL = nil
                 self.statusItem.button?.title = ""
                 guard let file else {
-                    Toast.shared.show(L("Модель не скачалась (\(беда ?? "сеть")) — попробуй позже, окно появится снова при запуске",
-                                        "Model download failed (\(беда ?? "network")) — try again later, the prompt returns on launch"))
+                    Toast.shared.show(L("Модель не скачалась (\(error ?? "сеть")) — попробуй позже, окно появится снова при запуске",
+                                        "Model download failed (\(error ?? "network")) — try again later, the prompt returns on launch"))
                     return
                 }
                 self.unpackSpeechModel(file)
@@ -905,7 +973,7 @@ final class App: NSObject, NSApplicationDelegate {
                                         "Pisar could not do it. The selection is untouched"))
                     return
                 }
-                self.paste(out)
+                self.paste(out, spacing: false) // встаёт вместо выделенного, пробел лишний
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                     if Brain.shared.chipsEnabled {
                         let p = typingAnchorIfKnown() ?? NSEvent.mouseLocation
@@ -960,9 +1028,9 @@ final class App: NSObject, NSApplicationDelegate {
                 }
                 return
             }
-            let текст: String
+            let text: String
             do {
-                текст = try r.transcribe(samples: samples, rate: 16000)
+                text = try r.transcribe(samples: samples, rate: 16000)
             } catch {
                 NSLog("Гига Писарь: не распознал — \(error)")
                 DispatchQueue.main.async {
@@ -973,24 +1041,26 @@ final class App: NSObject, NSApplicationDelegate {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                if текст.isEmpty {
+                if text.isEmpty {
                     self.setState(.idle)
                     self.flashError()
                     return
                 }
                 // Было выделение при нажатии рации? Тогда это команда над ним.
-                if self.runSelectionCommand(текст) { return }
+                if self.runSelectionCommand(text) { return }
                 // Сразу в буфер: что бы дальше ни случилось (мозг завис,
                 // вставка не прошла, приложение перезапустили) — наговоренное
                 // уже не потеряется, его можно вставить самому через ⌘V.
                 let pb = NSPasteboard.general
+                self.stashClipboard()
                 pb.clearContents()
-                pb.setString(текст, forType: .string)
+                pb.setString(text, forType: .string)
+                self.clipboardMark = pb.changeCount
                 // Обращение «Писарь, …» в конце? Сперва текст идёт в мозг.
-                if let (body, cmd) = Brain.parseCommand(текст) {
+                if let (body, cmd) = Brain.parseCommand(text) {
                     guard Brain.shared.ready, Brain.shared.engineAvailable else {
                         self.setState(.idle)
-                        self.paste(текст)
+                        self.paste(text)
                         if Brain.shared.chosenId == nil, Brain.shared.engineAvailable {
                             Toast.shared.show(L("Похоже на команду Писарю — включи мозг в меню Гиги",
                                                 "Sounded like a Pisar command — pick a brain in the Giga menu"))
@@ -1004,7 +1074,7 @@ final class App: NSObject, NSApplicationDelegate {
                             if let out {
                                 self.paste(out)
                             } else {
-                                self.paste(текст)
+                                self.paste(text)
                                 Toast.shared.show(L("Писарь не справился — вставил как есть",
                                                     "Pisar could not do it — pasted as is"))
                             }
@@ -1013,7 +1083,7 @@ final class App: NSObject, NSApplicationDelegate {
                     return
                 }
                 self.setState(.idle)
-                self.paste(текст, offerChips: true)
+                self.paste(text, offerChips: true)
             }
         }
     }
@@ -1100,7 +1170,10 @@ final class App: NSObject, NSApplicationDelegate {
                         let p = typingAnchorIfKnown() ?? NSEvent.mouseLocation
                         Chips.shared.showRevert(near: p, terminal: self.frontIsTerminal) { [weak self] in
                             guard let self else { return }
-                            self.undoInsert(chars: out.count)
+                            // считаем по вставленному, а не по ответу мозга:
+                            // paste мог дописать пробел, и в терминале мы
+                            // стираем ровно столько символов, сколько вставили
+                            self.undoInsert(chars: self.lastText?.count ?? out.count)
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                 self.paste(original)
                                 // вернули — и снова предлагаем команды:
@@ -1116,20 +1189,29 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    func paste(_ text: String, offerChips: Bool = false) {
+    /// spacing — дописать пробел в конец. Так следующая фраза не слипается
+    /// с предыдущей, если диктовать подряд. Выключаем там, где текст встаёт
+    /// не в конец, а на место выделенного куска.
+    func paste(_ text: String, offerChips: Bool = false, spacing: Bool = true) {
+        var text = text
+        if spacing, let last = text.last, !last.isWhitespace { text += " " }
         lastText = text
 
-        // Вставляем через буфер (быстро и надёжно). Диктовка в буфере
-        // и остаётся: захотел вставить ещё раз в другом месте — просто ⌘V.
+        // Вставляем через буфер (быстро и надёжно), но берём его взаймы:
+        // прежнее содержимое запоминаем и вернём, как только текст встанет
+        // в поле. Если вставить не выйдет — диктовка в буфере и останется,
+        // чтобы её можно было вставить самому.
         let pb = NSPasteboard.general
+        stashClipboard()
         pb.clearContents()
         pb.setString(text, forType: .string)
+        clipboardMark = pb.changeCount
 
         // Есть ли куда вставлять? Спрашиваем про сам фокус в текстовом поле,
         // а не про координаты каретки: терминалы и Electron часто скрывают,
         // ГДЕ каретка, но поле-то у них есть и ⌘V сработает. Если поля нет —
         // ⌘V всё равно нажмём, но буфер НЕ затираем и подсказываем.
-        let вПоле = hasTextFocus()
+        let inField = hasTextFocus()
         // Нажать ⌘V за пользователя можно только с разрешением Accessibility.
         let trusted = AXIsProcessTrusted() || CGPreflightPostEventAccess()
         guard trusted else {
@@ -1141,10 +1223,32 @@ final class App: NSObject, NSApplicationDelegate {
             a.informativeText = L("Текст уже в буфере — вставь его сам через ⌘V.\nВ появившемся системном окне нажми «Open System Settings» и включи «Giga Pisar» в списке Accessibility.",
                                   "The text is already on the clipboard — paste it with ⌘V.\nIn the system dialog, click “Open System Settings” and turn on “Giga Pisar” under Accessibility.")
             a.runModal()
+            keepClipboard() // вставить нечем — диктовка остаётся в буфере
             return
         }
+        // Снимок поля до вставки: по нему потом решим, состоялась ли она.
+        let caretBefore = caretIndex()
+        let lengthBefore = focusedTextLength()
         pressKey(9, .maskCommand) // ⌘V
-        if вПоле {
+        if inField {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.clipboardHold) { [weak self] in
+                guard let self else { return }
+                // Текст действительно встал в поле? Каретка должна была уехать
+                // вперёд или в поле прибавиться символов. Если убедиться не
+                // удалось — буфер не возвращаем: пусть лучше пропадёт чужая
+                // копия, чем наговорённое, которое больше взять неоткуда.
+                let вперёд = { (b: Int?, a: Int?) in
+                    if let b, let a { return a > b } else { return false }
+                }
+                if вперёд(caretBefore, caretIndex()) || вперёд(lengthBefore, focusedTextLength()) {
+                    self.restoreClipboard()
+                } else {
+                    NSLog("Гига вставка: подтверждения нет — диктовку оставляю в буфере")
+                    self.keepClipboard()
+                    Toast.shared.show(L("Вставка не прошла — диктовка в буфере, нажми ⌘V",
+                                        "The paste didn't land — your dictation is on the clipboard, press ⌘V"))
+                }
+            }
             // Менюшка: сырой текст вставлен, предложить причесать.
             if offerChips, Brain.shared.ready, Brain.shared.chipsEnabled {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
@@ -1152,6 +1256,7 @@ final class App: NSObject, NSApplicationDelegate {
                 }
             }
         } else {
+            keepClipboard() // поля не было — диктовка нужна в буфере
             Toast.shared.show(L("Курсор был не в тексте — диктовка в буфере, нажми ⌘V",
                                 "The cursor wasn't in a text field — your dictation is on the clipboard, press ⌘V"))
         }

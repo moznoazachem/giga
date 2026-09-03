@@ -143,10 +143,10 @@ enum SelfUpdate {
         }
         downloader = Downloader(
             onPercent: { p in report("↓ \(p)%") },
-            onDone: { file, беда in
+            onDone: { file, error in
                 downloader = nil
                 guard let file else {
-                    NSLog("Гига Писарь: зеркало \(zips[i].host ?? "?") — \(беда ?? "?")")
+                    NSLog("Гига Писарь: зеркало \(zips[i].host ?? "?") — \(error ?? "?")")
                     download(zips, at: i + 1, version: version, dest: dest,
                              report: report, ready: ready, bail: bail)
                     return

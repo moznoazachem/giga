@@ -87,33 +87,33 @@ final class Mic {
             guard let self, let data = buf.floatChannelData else { return }
             let n = Int(buf.frameLength)
             guard n > 0 else { return }
-            let каналов = Int(buf.format.channelCount)
+            let channels = Int(buf.format.channelCount)
             var mono = [Float](repeating: 0, count: n)
-            for c in 0..<каналов {
+            for c in 0..<channels {
                 let p = data[c]
                 for i in 0..<n { mono[i] += p[i] }
             }
-            if каналов > 1 {
-                let k = Float(каналов)
+            if channels > 1 {
+                let k = Float(channels)
                 for i in 0..<n { mono[i] /= k }
             }
             // Громкость: не среднее по всему куску, а самое громкое
             // окно в 10 мс внутри него. Кусок в 4096 отсчётов — это ~85 мс;
             // среднее по такому сроку размазывает слоги в ровный гул,
             // и волна получается вялой, хотя голос живой.
-            let окно = max(1, Int(self.nativeRate / 100))
+            let window = max(1, Int(self.nativeRate / 100))
             var peak: Float = 0
             var i = 0
             while i < n {
-                let край = min(i + окно, n)
+                let edge = min(i + window, n)
                 var sum: Float = 0
-                for j in i..<край { sum += mono[j] * mono[j] }
-                peak = max(peak, sqrt(sum / Float(край - i)))
-                i = край
+                for j in i..<edge { sum += mono[j] * mono[j] }
+                peak = max(peak, sqrt(sum / Float(edge - i)))
+                i = edge
             }
             let db = 20 * log10(max(peak, 1e-7))
-            let ровно = min(max((db - Self.dbFloor) / (Self.dbCeil - Self.dbFloor), 0), 1)
-            let level = pow(ровно, Self.curve)
+            let norm = min(max((db - Self.dbFloor) / (Self.dbCeil - Self.dbFloor), 0), 1)
+            let level = pow(norm, Self.curve)
             self.lock.lock()
             self.chunks.append(mono)
             self.levelPeak = max(self.levelPeak, level)
@@ -169,17 +169,17 @@ final class Mic {
 
         var out: [Float] = []
         out.reserveCapacity(Int(Double(x.count) * to / from) + 16)
-        var подано = false
+        var fed = false
         while true {
             guard let outBuf = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: 8192)
             else { break }
             var err: NSError?
             let st = conv.convert(to: outBuf, error: &err) { _, status in
-                if подано {
+                if fed {
                     status.pointee = .endOfStream
                     return nil
                 }
-                подано = true
+                fed = true
                 status.pointee = .haveData
                 return inBuf
             }

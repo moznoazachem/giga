@@ -58,6 +58,19 @@ rm build/Giga-arm64 build/Giga-x86_64
 
 cp Info.plist "$APP/Contents/Info.plist"
 cp icon/Giga.icns "$APP/Contents/Resources/Giga.icns"
+# Свои значки меню — символы, экспортированные из SF Symbols. Их нельзя
+# просто положить файлом: символом их делает каталог ассетов, собранный
+# в Assets.car, и только тогда система рисует их как системные — шаблонными,
+# с нужным весом и с вырезом под перечёркиванием. actool живёт в Xcode;
+# без него собирается всё то же самое, только пункты меню будут без значков.
+if ACTOOL=$(xcrun --find actool 2>/dev/null); then
+    echo "── значки меню"
+    "$ACTOOL" icon/Assets.xcassets --compile "$APP/Contents/Resources" \
+        --platform macosx --minimum-deployment-target 13.4 \
+        --output-partial-info-plist build/actool.plist --errors --warnings > /dev/null
+else
+    echo "   actool не нашёлся (нужен Xcode) — меню соберётся без своих значков"
+fi
 cp "$ORT_LIB" "$APP/Contents/Frameworks/"
 
 if [ "$WITH_MODEL" = "1" ]; then
