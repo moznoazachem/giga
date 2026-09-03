@@ -327,10 +327,19 @@ final class App: NSObject, NSApplicationDelegate {
         keyItem.submenu = keyMenu
         menu.addItem(keyItem)
 
-        // плашка с волной у места набора
-        let waveItem = mkItem(L("Волна у курсора", "Wave Near Cursor"),
-                              icon: "waveform", action: #selector(toggleWave))
-        waveItem.state = waveEnabled ? .on : .off
+        // плашка с волной: выключена, у места набора или внизу экрана
+        let waveItem = mkItem(L("Волна голоса", "Voice Wave"), icon: "waveform")
+        let waveMenu = NSMenu()
+        let место = waveEnabled ? WavePanel.place.rawValue : "off"
+        for (id, name) in [("off", L("Выключена", "Off")),
+                           ("cursor", L("У курсора", "Near Cursor")),
+                           ("bottom", L("Внизу экрана", "Bottom of Screen"))] {
+            let it = mkItem(name, action: #selector(pickWave(_:)))
+            it.representedObject = id
+            it.state = место == id ? .on : .off
+            waveMenu.addItem(it)
+        }
+        waveItem.submenu = waveMenu
         menu.addItem(waveItem)
 
         // автозапуск при входе
@@ -463,9 +472,16 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc func toggleWave() {
-        UserDefaults.standard.set(!waveEnabled, forKey: "wavePanel")
-        if !waveEnabled { wave.hide() }
+    @objc func pickWave(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(id != "off", forKey: "wavePanel")
+        if let p = WavePanel.Place(rawValue: id) { WavePanel.place = p }
+        if !waveEnabled {
+            wave.hide()
+        } else if state == .rec {
+            // выбрали прямо во время диктовки — плашка переезжает сразу
+            wave.show(near: typingAnchor())
+        }
         buildMenu()
     }
 

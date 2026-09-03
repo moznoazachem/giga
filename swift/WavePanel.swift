@@ -237,9 +237,13 @@ final class WaveView: NSView {
     /// столбики дальше, не дожидаясь нового всплеска.
     private var sinceRoll = 0
 
-    /// Масштаб появления, 1 — плашка в полный рост. Рисуем от левого
-    /// верхнего угла: там каретка, и плашка будто выпрыгивает из-под неё.
+    /// Масштаб появления, 1 — плашка в полный рост.
     var scale: CGFloat = 1
+
+    /// Откуда растёт плашка. У курсора — из левого верхнего угла: там
+    /// каретка, и плашка будто выпрыгивает из-под неё. Внизу экрана
+    /// каретки рядом нет, привязываться не к чему — растём из середины.
+    var popFromCenter = false
 
     /// С какой громкости плашка начинает частить.
     private static let livelyFrom: CGFloat = 0.35
@@ -273,7 +277,9 @@ final class WaveView: NSView {
     }
 
     override func mouseUp(with e: NSEvent) {
-        if dragged, let w = window {
+        // Прибиваем только плашку у курсора: у нижней место задано выбором
+        // в меню, и запомненный перетаскиванием угол спорил бы с ним.
+        if dragged, WavePanel.place == .cursor, let w = window {
             WavePanel.pinned = w.frame.origin
             NSLog("Гига волна: перетащена и прибита к \(w.frame.origin)")
         }
@@ -341,10 +347,12 @@ final class WaveView: NSView {
         let растёт = scale != 1
         if растёт {
             NSGraphicsContext.saveGraphicsState()
+            let якорь = popFromCenter ? NSPoint(x: bounds.midX, y: bounds.midY)
+                                      : NSPoint(x: 0, y: bounds.height)
             let t = NSAffineTransform()
-            t.translateX(by: 0, yBy: bounds.height) // якорь — левый верхний угол
+            t.translateX(by: якорь.x, yBy: якорь.y)
             t.scaleX(by: scale, yBy: scale)
-            t.translateX(by: 0, yBy: -bounds.height)
+            t.translateX(by: -якорь.x, yBy: -якорь.y)
             t.concat()
         }
         defer { if растёт { NSGraphicsContext.restoreGraphicsState() } }
@@ -468,6 +476,19 @@ final class WavePanel {
     private let view = WaveView()
     private var popTimer: Timer?
 
+    /// Где показывать плашку: у каретки или внизу экрана. Выбирается в меню.
+    enum Place: String {
+        case cursor, bottom
+
+        /// Насколько высоко над низом экрана висит нижняя плашка.
+        static let bottomShare: CGFloat = 0.10
+    }
+
+    static var place: Place {
+        get { Place(rawValue: UserDefaults.standard.string(forKey: "wavePlace") ?? "") ?? .cursor }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "wavePlace") }
+    }
+
     /// Куда пользователь перетащил плашку. Пока не таскал — nil,
     /// и плашка ходит за текстовой кареткой.
     static var pinned: NSPoint? {
@@ -500,13 +521,25 @@ final class WavePanel {
         // Перетаскивание (и только его!) ловит сама WaveView — см. mouseUp.
     }
 
-    /// Место плашки для данного якоря: прибитое, если её перетаскивали,
-    /// иначе чуть ниже и правее точки набора — и не за краем экрана.
+    /// Место плашки для данного якоря. Внизу экрана — по центру и на
+    /// десятой части высоты от низа. У каретки — прибитое, если плашку
+    /// перетаскивали, иначе чуть ниже и правее точки набора. И в любом
+    /// случае не за краем экрана.
     private func clampedOrigin(for p: NSPoint) -> NSPoint {
         let size = panel.frame.size
-        var origin = Self.pinned ?? NSPoint(x: p.x + 14, y: p.y - size.height - 10)
-        let anchor = Self.pinned ?? p
+        let bottom = Self.place == .bottom
+        // экран берём тот, где идёт набор: у нижней плашки тоже — она
+        // должна висеть на том мониторе, куда человек смотрит
+        let anchor = bottom ? p : (Self.pinned ?? p)
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main
+
+        var origin: NSPoint
+        if bottom, let s = screen {
+            origin = NSPoint(x: s.frame.midX - size.width / 2,
+                             y: s.frame.minY + s.frame.height * Place.bottomShare)
+        } else {
+            origin = Self.pinned ?? NSPoint(x: p.x + 14, y: p.y - size.height - 10)
+        }
         if let f = screen?.visibleFrame {
             origin.x = min(max(origin.x, f.minX + 4), f.maxX - size.width - 4)
             origin.y = min(max(origin.y, f.minY + 4), f.maxY - size.height - 4)
@@ -523,7 +556,8 @@ final class WavePanel {
         pop()
     }
 
-    /// Появление: плашка за 12 кадров вырастает из левого верхнего угла,
+    /// Появление: плашка за 12 кадров вырастает из своего якоря (у курсора —
+    /// левый верхний угол, внизу экрана — середина),
     /// в конце чуть перелетает свой размер и садится обратно. Само окно
     /// всё это время стоит на месте в полный рост — растёт только рисунок,
     /// поэтому ни положение, ни перетаскивание от анимации не зависят.
@@ -531,6 +565,7 @@ final class WavePanel {
         popTimer?.invalidate()
         let кадров = 12
         var кадр = 0
+        view.popFromCenter = Self.place == .bottom
         view.scale = Self.popFrom
         view.needsDisplay = true
         let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] tm in
@@ -561,6 +596,8 @@ final class WavePanel {
     /// Во время записи: окно с кареткой переехало — плашка следом.
     /// Прибитую не трогаем; когда её тащат мышью — тем более.
     func follow(_ anchor: NSPoint?) {
+        // нижняя плашка стоит на месте: ездить ей некуда
+        guard Self.place == .cursor else { return }
         guard let anchor, Self.pinned == nil, panel.isVisible, !view.dragging else { return }
         let o = clampedOrigin(for: anchor)
         let cur = panel.frame.origin
