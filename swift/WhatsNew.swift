@@ -8,13 +8,13 @@ import AppKit
 
 /// Что изменилось в ЭТОЙ версии. Обновлять при каждом выпуске вместе с номером.
 let WHATS_NEW: [String] = uiIsRussian ? [
-    "«Что нового» прямо в этом окне: и про твою версию, и про свежую",
-    "Пункт «Рассказать другу…»: ссылка на сайт через Сообщения, Почту, Telegram, AirDrop",
-    "Менюшка после вставки по умолчанию выключена, включается в «Мозге Писаря»",
+    "Буфер обмена возвращается: что скопировал до диктовки, то и вставится по ⌘V",
+    "Волну голоса можно поставить внизу экрана, сообщения теперь в той же плашке",
+    "Значки в меню, менюшка после вставки в системном стиле, пробел между фразами при диктовке подряд",
 ] : [
-    "“What's new” right in this window, for your version and for the fresh one",
-    "“Tell a friend…” menu item: site link via Messages, Mail, Telegram, AirDrop",
-    "The after-paste menu is off by default, switch it on under “Pisar's brain”",
+    "The clipboard comes back: whatever you copied before dictating is what ⌘V pastes",
+    "The voice wave can sit at the bottom of the screen, messages now live in the same pill",
+    "Menu icons, a native-looking after-paste menu, a space between phrases when dictating in a row",
 ]
 
 /// Разбор поля notes из манифеста: словарь по языкам, список или строка.
