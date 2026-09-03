@@ -66,22 +66,22 @@ enum Audio {
     /// Повторяет ffmpeg silencedetect: тише порога дольше заданного времени.
     static func silences(_ x: [Float], rate: Int,
                          noiseDb: Float = -35, minSeconds: Double = 0.3) -> [Double] {
-        let порог = powf(10.0, noiseDb / 20.0)
-        let минимум = Int(minSeconds * Double(rate))
-        var точки: [Double] = []
-        var начало = -1
+        let threshold = powf(10.0, noiseDb / 20.0)
+        let minRun = Int(minSeconds * Double(rate))
+        var points: [Double] = []
+        var start = -1
 
         for i in 0..<x.count {
-            if abs(x[i]) < порог {
-                if начало < 0 { начало = i }
-            } else if начало >= 0 {
-                if i - начало >= минимум {
-                    точки.append(Double(начало + i) / 2.0 / Double(rate))
+            if abs(x[i]) < threshold {
+                if start < 0 { start = i }
+            } else if start >= 0 {
+                if i - start >= minRun {
+                    points.append(Double(start + i) / 2.0 / Double(rate))
                 }
-                начало = -1
+                start = -1
             }
         }
-        return точки
+        return points
     }
 
     /// Границы кусков: не длиннее предела, разрез — по последней паузе перед ним.

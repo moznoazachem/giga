@@ -18,31 +18,31 @@ struct ModelConfig {
         var c = ModelConfig()
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return c }
 
-        func число(_ ключ: String) -> Int? {
-            for строка in text.split(separator: "\n") {
-                let s = строка.trimmingCharacters(in: .whitespaces)
-                guard s.hasPrefix(ключ + ":") else { continue }
-                return Int(s.dropFirst(ключ.count + 1).trimmingCharacters(in: .whitespaces))
+        func intValue(_ key: String) -> Int? {
+            for line in text.split(separator: "\n") {
+                let s = line.trimmingCharacters(in: .whitespaces)
+                guard s.hasPrefix(key + ":") else { continue }
+                return Int(s.dropFirst(key.count + 1).trimmingCharacters(in: .whitespaces))
             }
             return nil
         }
-        func флаг(_ ключ: String) -> Bool? {
-            for строка in text.split(separator: "\n") {
-                let s = строка.trimmingCharacters(in: .whitespaces)
-                guard s.hasPrefix(ключ + ":") else { continue }
-                return s.dropFirst(ключ.count + 1).trimmingCharacters(in: .whitespaces) == "true"
+        func boolValue(_ key: String) -> Bool? {
+            for line in text.split(separator: "\n") {
+                let s = line.trimmingCharacters(in: .whitespaces)
+                guard s.hasPrefix(key + ":") else { continue }
+                return s.dropFirst(key.count + 1).trimmingCharacters(in: .whitespaces) == "true"
             }
             return nil
         }
 
-        if let v = число("features") { c.features.nMels = v }
-        if let v = число("sample_rate") { c.features.sampleRate = v }
-        if let v = число("n_fft") { c.features.nFFT = v }
-        if let v = число("win_length") { c.features.winLength = v }
-        if let v = число("hop_length") { c.features.hopLength = v }
-        if let v = флаг("center") { c.features.center = v }
-        if let v = число("pred_hidden") { c.predHidden = v }
-        if let v = число("pred_rnn_layers") { c.predLayers = v }
+        if let v = intValue("features") { c.features.nMels = v }
+        if let v = intValue("sample_rate") { c.features.sampleRate = v }
+        if let v = intValue("n_fft") { c.features.nFFT = v }
+        if let v = intValue("win_length") { c.features.winLength = v }
+        if let v = intValue("hop_length") { c.features.hopLength = v }
+        if let v = boolValue("center") { c.features.center = v }
+        if let v = intValue("pred_hidden") { c.predHidden = v }
+        if let v = intValue("pred_rnn_layers") { c.predLayers = v }
         return c
     }
 }

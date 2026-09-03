@@ -78,7 +78,7 @@ final class Chips {
         /// Общая на всё меню подложка выделения: системный материал,
         /// который сам знает, как выглядеть на светлом и на тёмном.
         /// Она одна и переезжает к той строке, что сейчас выбрана.
-        weak var подложка: NSView?
+        weak var selection: NSView?
 
         static let height: CGFloat = 24
         static let padL: CGFloat = 15    // от края пилюли до значка
@@ -124,14 +124,14 @@ final class Chips {
 
         func setLit(_ on: Bool) {
             lit = on
-            if let подложка {
+            if let selection {
                 if on {
-                    подложка.frame = frame
-                    подложка.isHidden = false
-                } else if подложка.frame == frame {
+                    selection.frame = frame
+                    selection.isHidden = false
+                } else if selection.frame == frame {
                     // гасим, только если подложка всё ещё под нами:
                     // мышь могла уже уехать на соседнюю строку
-                    подложка.isHidden = true
+                    selection.isHidden = true
                 }
             }
             needsDisplay = true
@@ -148,41 +148,41 @@ final class Chips {
             // кажется, что тёмная надпись уместнее, — но в системном меню
             // там именно белый: на снимке внутри полосы нет ни одной тёмной
             // точки, только 255,255,255.
-            let основной: NSColor = terminal
+            let foreground: NSColor = terminal
                 ? (lit ? .systemTeal : NSColor.white.withAlphaComponent(0.85))
                 : (lit ? .white : .labelColor)
-            let тусклый: NSColor = terminal
+            let dim: NSColor = terminal
                 ? NSColor.white.withAlphaComponent(0.35)
                 : (lit ? NSColor.white.withAlphaComponent(0.75) : .tertiaryLabelColor)
 
             // значок (в терминале вместо него — маркер выбора)
             if terminal {
                 if lit {
-                    NSAttributedString(string: "❯", attributes: [.font: rowFont, .foregroundColor: основной])
+                    NSAttributedString(string: "❯", attributes: [.font: rowFont, .foregroundColor: foreground])
                         .draw(at: NSPoint(x: Self.padL, y: baseline(rowFont)))
                 }
             } else if let icon {
                 // Цвет символу задаёт палитра, а не заливка поверх: у многих
                 // символов свои слои, и ручная подкраска их не берёт —
                 // на подсвеченной строке значок оставался тёмным.
-                let крашеный = icon.withSymbolConfiguration(.init(paletteColors: [основной])) ?? icon
+                let tinted = icon.withSymbolConfiguration(.init(paletteColors: [foreground])) ?? icon
                 // В квадрат символ не вписываем: почти все они шире, чем выше,
                 // и от квадрата их плющило. Вписываем по большей стороне
                 // и ставим по центру колонки.
-                let s = крашеный.size
+                let s = tinted.size
                 let k = min(Self.iconW / s.width, Self.iconW / s.height)
                 let w = s.width * k, h = s.height * k
-                крашеный.draw(in: NSRect(x: Self.padL + (Self.iconW - w) / 2,
+                tinted.draw(in: NSRect(x: Self.padL + (Self.iconW - w) / 2,
                                          y: (bounds.height - h) / 2, width: w, height: h))
             }
 
             let t = NSAttributedString(string: baseTitle,
-                                       attributes: [.font: rowFont, .foregroundColor: основной])
+                                       attributes: [.font: rowFont, .foregroundColor: foreground])
             t.draw(at: NSPoint(x: Self.titleX(withIcon: icon != nil || terminal), y: baseline(rowFont)))
 
             if !hint.isEmpty {
                 let h = NSAttributedString(string: hint,
-                                           attributes: [.font: hintFont, .foregroundColor: тусклый])
+                                           attributes: [.font: hintFont, .foregroundColor: dim])
                 h.draw(at: NSPoint(x: bounds.width - Self.padR - h.size().width,
                                    y: baseline(hintFont)))
             }
@@ -253,7 +253,7 @@ final class Chips {
         // разъезжалась на тёмном: у системы выделение вибрантное, а не
         // просто полупрозрачное. Кладём её первой — она должна быть под
         // строками, иначе накроет их текст.
-        var подложка: NSView?
+        var selection: NSView?
         if !terminalStyle {
             let v = NSVisualEffectView()
             v.material = .selection
@@ -265,11 +265,11 @@ final class Chips {
             v.layer?.masksToBounds = true
             v.isHidden = true
             holder.addSubview(v)
-            подложка = v
+            selection = v
         }
 
         for r in rows.reversed() {
-            r.подложка = подложка
+            r.selection = selection
             r.frame = NSRect(x: Self.padBox, y: y,
                              width: width - Self.padBox * 2, height: Row.height)
             holder.addSubview(r)
@@ -298,9 +298,9 @@ final class Chips {
             x.contentTintColor = terminalStyle
                 ? NSColor.white.withAlphaComponent(0.4) : .tertiaryLabelColor
             // крестик стоит на той же вертикали, что и колонка цифр
-            let колонка = Row.hintWidth(rows.first?.hintFont ?? .menuFont(ofSize: 13))
-            let центр = width - Self.padBox - Row.padR - колонка / 2
-            x.frame = NSRect(x: центр - 7, y: y + 3, width: 14, height: 14)
+            let column = Row.hintWidth(rows.first?.hintFont ?? .menuFont(ofSize: 13))
+            let center = width - Self.padBox - Row.padR - column / 2
+            x.frame = NSRect(x: center - 7, y: y + 3, width: 14, height: 14)
             holder.addSubview(x)
             y += h.frame.height + 9
         }
