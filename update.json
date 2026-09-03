@@ -1,19 +1,19 @@
 {
-  "version": "3.6",
+  "version": "3.6.1",
   "downloads": [
-    "https://gitflic.ru/project/moznoazachem/giga/release/7873c4b4-d43e-40d7-b245-2f8ab5a8a70b/8b905dab-d8af-4e55-b360-3e67858f45c2/download",
-    "https://github.com/moznoazachem/giga/releases/download/v3.6/GigaPisar-3.6.zip"
+    "https://gitflic.ru/project/moznoazachem/giga/release/da46b7a1-0132-4f6f-b321-8c41f3b9caac/97583c2d-6b87-4b55-89e2-16e071078ebe/download",
+    "https://github.com/moznoazachem/giga/releases/download/v3.6.1/GigaPisar-3.6.1.zip"
   ],
   "notes": {
     "ru": [
-      "Буфер обмена возвращается: что скопировал до диктовки, то и вставится по ⌘V",
-      "Волну голоса можно поставить внизу экрана, сообщения теперь в той же плашке",
-      "Значки в меню, менюшка после вставки в системном стиле, пробел между фразами при диктовке подряд"
+      "VS Code, Cursor и другие программы на Electron: диктовка больше не ругается «курсор не в тексте», буфер возвращается",
+      "Рабочий стол Finder больше не принимается за текстовое поле",
+      "Убрано лишнее сообщение «Вставка не прошла»"
     ],
     "en": [
-      "The clipboard comes back: whatever you copied before dictating is what ⌘V pastes",
-      "The voice wave can sit at the bottom of the screen, messages now live in the same pill",
-      "Menu icons, a native-looking after-paste menu, a space between phrases when dictating in a row"
+      "VS Code, Cursor and other Electron apps: no more false “cursor wasn't in a text field”, the clipboard comes back",
+      "The Finder desktop is no longer mistaken for a text field",
+      "The spurious “paste didn't land” message is gone"
     ]
   }
 }
