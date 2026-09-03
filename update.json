@@ -1,19 +1,19 @@
 {
-  "version": "3.5",
+  "version": "3.6",
   "downloads": [
-    "https://gitflic.ru/project/moznoazachem/giga/release/694a6694-4f79-49de-837a-738e9e221127/1c496264-97d4-47e8-8c35-2197f6a2bc20/download",
-    "https://github.com/moznoazachem/giga/releases/download/v3.5/GigaPisar-3.5.zip"
+    "https://gitflic.ru/project/moznoazachem/giga/release/7873c4b4-d43e-40d7-b245-2f8ab5a8a70b/8b905dab-d8af-4e55-b360-3e67858f45c2/download",
+    "https://github.com/moznoazachem/giga/releases/download/v3.6/GigaPisar-3.6.zip"
   ],
   "notes": {
     "ru": [
-      "«Что нового» прямо в окне проверки обновлений: и про твою версию, и про свежую",
-      "Пункт «Рассказать другу…»: ссылка на сайт через Сообщения, Почту, Telegram, AirDrop",
-      "Менюшка после вставки по умолчанию выключена, включается в «Мозге Писаря»"
+      "Буфер обмена возвращается: что скопировал до диктовки, то и вставится по ⌘V",
+      "Волну голоса можно поставить внизу экрана, сообщения теперь в той же плашке",
+      "Значки в меню, менюшка после вставки в системном стиле, пробел между фразами при диктовке подряд"
     ],
     "en": [
-      "“What's new” right in the update window, for your version and for the fresh one",
-      "“Tell a friend…” menu item: site link via Messages, Mail, Telegram, AirDrop",
-      "The after-paste menu is off by default, switch it on under “Pisar's brain”"
+      "The clipboard comes back: whatever you copied before dictating is what ⌘V pastes",
+      "The voice wave can sit at the bottom of the screen, messages now live in the same pill",
+      "Menu icons, a native-looking after-paste menu, a space between phrases when dictating in a row"
     ]
   }
 }
