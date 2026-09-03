@@ -425,7 +425,7 @@ final class App: NSObject, NSApplicationDelegate {
                             sub: L("сейчас стоит \(APP_VERSION)", "installed: \(APP_VERSION)"),
                             icon: "arrow.triangle.2.circlepath",
                             action: #selector(checkUpdatesManual)))
-        menu.addItem(mkItem(L("Рассказать другу…", "Tell a friend…"),
+        menu.addItem(mkItem(L("Рассказать другу…", "Tell a Friend…"),
                             sub: L("ссылка на сайт: Сообщения, Почта, Telegram, AirDrop",
                                    "site link via Messages, Mail, Telegram, AirDrop"),
                             icon: "square.and.arrow.up", action: #selector(shareApp)))
