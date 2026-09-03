@@ -1211,7 +1211,10 @@ final class App: NSObject, NSApplicationDelegate {
         // а не про координаты каретки: терминалы и Electron часто скрывают,
         // ГДЕ каретка, но поле-то у них есть и ⌘V сработает. Если поля нет —
         // ⌘V всё равно нажмём, но буфер НЕ затираем и подсказываем.
-        let inField = hasTextFocus()
+        // Молчание Accessibility — не отказ: в Electron дерево может быть
+        // ещё не построено, а ⌘V там прекрасно работает. Ругаемся, только
+        // когда точно знаем, что фокус не в тексте.
+        let inField = textFocus() != .notField
         // Нажать ⌘V за пользователя можно только с разрешением Accessibility.
         let trusted = AXIsProcessTrusted() || CGPreflightPostEventAccess()
         guard trusted else {
@@ -1226,28 +1229,15 @@ final class App: NSObject, NSApplicationDelegate {
             keepClipboard() // вставить нечем — диктовка остаётся в буфере
             return
         }
-        // Снимок поля до вставки: по нему потом решим, состоялась ли она.
-        let caretBefore = caretIndex()
-        let lengthBefore = focusedTextLength()
         pressKey(9, .maskCommand) // ⌘V
         if inField {
+            // Буфер возвращаем человеку. Проверять, дошла ли вставка на самом
+            // деле, мы пробовали — по каретке и числу символов в поле, — и от
+            // этого пришлось отказаться: Electron (VS Code и плагины в нём)
+            // отвечает Accessibility как попало, и проверка объявляла неудачу
+            // поверх удавшейся вставки.
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.clipboardHold) { [weak self] in
-                guard let self else { return }
-                // Текст действительно встал в поле? Каретка должна была уехать
-                // вперёд или в поле прибавиться символов. Если убедиться не
-                // удалось — буфер не возвращаем: пусть лучше пропадёт чужая
-                // копия, чем наговорённое, которое больше взять неоткуда.
-                let вперёд = { (b: Int?, a: Int?) in
-                    if let b, let a { return a > b } else { return false }
-                }
-                if вперёд(caretBefore, caretIndex()) || вперёд(lengthBefore, focusedTextLength()) {
-                    self.restoreClipboard()
-                } else {
-                    NSLog("Гига вставка: подтверждения нет — диктовку оставляю в буфере")
-                    self.keepClipboard()
-                    Toast.shared.show(L("Вставка не прошла — диктовка в буфере, нажми ⌘V",
-                                        "The paste didn't land — your dictation is on the clipboard, press ⌘V"))
-                }
+                self?.restoreClipboard()
             }
             // Менюшка: сырой текст вставлен, предложить причесать.
             if offerChips, Brain.shared.ready, Brain.shared.chipsEnabled {
